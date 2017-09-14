@@ -1,0 +1,73 @@
+﻿エクセルシートの加工
+
+店舗マスタ
+	・IDをA,B,C...からint型1,2,3...に変換
+	・店舗マスタに(0, その他, NA, NA, NA)を追加
+	・つまり、その他の店舗のIDを0に指定
+	・NA：なし
+
+担当者マスタ
+	・IDが0になっている謎の2人を削除
+	・店舗IDを整数型に変換
+	・その他の店舗IDを0に指定
+	・NA：なし
+
+商品マスタ
+	・予約カテゴリを削除
+	・予約商品名を削除
+	・商品略称を削除
+	・第２カテゴリIDのないものがある。ID「9000000002」
+	・その商品名「ﾌｪｲｼｬﾙ+ﾍｯﾄﾞﾏｯｻｰｼﾞ+ﾏｯｻｰｼﾞｼｬﾝﾌﾟｰ+眉ｶｯﾄ+ｶｯﾄ」
+	・第１カテゴリ「廃棄」の第２カテゴリを「廃棄」、第２カテゴリID「900001」に
+	・施術にも関わらず施術分数が抜けているものがある。
+	・販売開始日はすべて埋まっているが、販売終了日は抜けているものばかり（当然）
+	・商品名間違っているものがあるとの報告（小坪）
+	・NA：第２カテゴリID、第２カテゴリ、施術分数、販売終了日
+
+第１カテゴリマスタ
+	・第１カテゴリIDとその説明の対応マスタ
+	・簡単に作れた
+
+第２カテゴリマスタ
+	・第２カテゴリIDとその説明と属する第１カテゴリIDの対応マスタ
+	・第１カテゴリが900なのに第２カテゴリがNAになっている謎のやつを削除
+	・これは先ほどの「ﾌｪｲｼｬﾙ+ﾍｯﾄﾞﾏｯｻｰｼﾞ+ﾏｯｻｰｼﾞｼｬﾝﾌﾟｰ+眉ｶｯﾄ+ｶｯﾄ」
+
+会計履歴
+	・NA：顧客ID、会計税込売上、会計消費税、
+	・店舗IDを整数型に変換。
+	・
+	・取引種別の「手動ポイント付与」には価格がない。会計指名区分もない
+	・というか全然ない。4行ぐらいだし消してしまってもよいのでは
+	・担当者に0いるやん
+	・担当者IDに0復活
+	・POS入力担当者、会計担当者に＃N/Aがある。エクセルで置換かける
+	・ポイント残高、累計来店回数に以上に高い数値がある。
+	・電子マネーとかクレジットとかその他はめんどいからとりあえず放置
+	・商品券とかもだるすぎ。
+
+会計明細
+	・会計明細販売商品ID、int型の範囲を超えているものがある
+	・商品マスタもあとで確認
+
+テーブルの追加（csvから）
+ dbWriteTable(conn = db, name = “Student”, value = “student.csv”, 
+     row.names = FALSE, header = TRUE)
+ dbWriteTable(conn = db, name = “Class”, value = “class.csv”, 
+     row.names = FALSE, header = TRUE)
+ dbWriteTable(conn = db, name = “School”, value = “school.csv”, 
+     row.names = FALSE, header = TRUE)
+
+Rのdataframeオブジェクトからの追加
+   # Import data frames into database
+ dbWriteTable(conn = db, name = “Student”, value = Student, row.names = FALSE)
+ dbWriteTable(conn = db, name = “Class”, value = Class, row.names = FALSE)
+ dbWriteTable(conn = db, name = “School”, value = School, row.names = FALSE)
+
+
+
+
+db内部の確認
+ dbListTables(db)                   # The tables in the database
+ dbListFields(db, “School”)         # The columns in a table
+ dbReadTable(db, “School”)          # The data in a table
