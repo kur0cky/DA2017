@@ -7,7 +7,7 @@
 	・NA：なし
 
 担当者マスタ
-	・IDが0になっている謎の2人を削除
+	・IDが0の謎のやつが2人いた。片方削除
 	・店舗IDを整数型に変換
 	・その他の店舗IDを0に指定
 	・NA：なし
@@ -71,3 +71,8 @@ db内部の確認
  dbListTables(db)                   # The tables in the database
  dbListFields(db, “School”)         # The columns in a table
  dbReadTable(db, “School”)          # The data in a table
+
+
+問題の人
+     顧客ID 初回来店年 初回来店店舗 郵便番号 DM送信可否 性別 誕生年代         備考
+6137   6137       2014            0       NA       拒否 不明       NA 会員情報無し

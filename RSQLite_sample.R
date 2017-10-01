@@ -67,6 +67,7 @@ dbWriteTable(conn=db, name="tbl_customer", value=customer, row.names=FALSE)
 dbListTables(db)
 dbGetQuery(db, "SELECT * FROM tbl_store")
 dbGetQuery(db, "SELECT * FROM tbl_stylist")
+dbSendQuery(db, "DROP TABLE tbl_customer")
 #文字化け問題を何とかしなくちゃ
 
 
