@@ -4,13 +4,13 @@
 	・IDをA,B,C...からint型1,2,3...に変換
 	・店舗マスタに(0, その他, NA, NA, NA)を追加
 	・つまり、その他の店舗のIDを0に指定
-	・NA：なし
+
 
 担当者マスタ
 	・IDが0の謎のやつが2人いた。片方削除
-	・店舗IDを整数型に変換
-	・その他の店舗IDを0に指定
-	・NA：なし
+	・店舗IDを店舗マスタに従い整数型に変換
+	・'その他'の店舗IDを0に指定
+
 
 商品マスタ
 	・予約カテゴリを削除
@@ -20,9 +20,20 @@
 	・その商品名「ﾌｪｲｼｬﾙ+ﾍｯﾄﾞﾏｯｻｰｼﾞ+ﾏｯｻｰｼﾞｼｬﾝﾌﾟｰ+眉ｶｯﾄ+ｶｯﾄ」
 	・第１カテゴリ「廃棄」の第２カテゴリを「廃棄」、第２カテゴリID「900001」に
 	・施術にも関わらず施術分数が抜けているものがある。
+	・商品名が'#NAME?'となっていた商品、他の情報をもとに'新宿サウス店不明クーポン'に変更
+	【備考】
 	・販売開始日はすべて埋まっているが、販売終了日は抜けているものばかり（当然）
 	・商品名間違っているものがあるとの報告（小坪）
-	・NA：第２カテゴリID、第２カテゴリ、施術分数、販売終了日
+	・商品IDは'X'から始まるものがあり、そのためcharacter型
+
+顧客マスタ
+	・初回来店年が1978年以前のものをNULLに。（日本進出が1978年）
+	・誕生年代が2030と2080のものをNULLに。2件
+	・初回来店年 < 誕生年代 となっていたなぞの1件を両方NULLに
+	【備考】
+	・備考が'フリー男性', 'フリー女性', '会員情報無し'に関しては要検討
+	・統合してしまったりIDをNULLにしてしまうと累計来店回数に不都合が生じる
+
 
 第１カテゴリマスタ
 	・第１カテゴリIDとその説明の対応マスタ
@@ -34,45 +45,18 @@
 	・これは先ほどの「ﾌｪｲｼｬﾙ+ﾍｯﾄﾞﾏｯｻｰｼﾞ+ﾏｯｻｰｼﾞｼｬﾝﾌﾟｰ+眉ｶｯﾄ+ｶｯﾄ」
 
 会計履歴
-	・NA：顧客ID、会計税込売上、会計消費税、
-	・店舗IDを整数型に変換。
-	・
+	・店舗IDを店舗マスタに従い整数型に変換。
 	・取引種別の「手動ポイント付与」には価格がない。会計指名区分もない
-	・というか全然ない。4行ぐらいだし消してしまってもよいのでは
-	・担当者に0いるやん
-	・担当者IDに0復活
-	・POS入力担当者、会計担当者に＃N/Aがある。エクセルで置換かける
-	・ポイント残高、累計来店回数に以上に高い数値がある。
+	・というか他の項目について全然ない。4件だし削除してしまっても良いのでは
+	　→削除
+	・POS入力担当者、会計担当者に＃N/Aがあった。NULLに
+	【備考】
+	・担当者に0いる（複数人が担当）
+	・ポイント残高、累計来店回数に以上に高い数値がある。（会員情報無し 系）
 	・電子マネーとかクレジットとかその他はめんどいからとりあえず放置
-	・商品券とかもだるすぎ。
+	・商品券とかもだるそう
+	・要確認（返品関係）
 
 会計明細
-	・会計明細販売商品ID、int型の範囲を超えているものがある
-	・商品マスタもあとで確認
+	・要確認（返品関係）
 
-テーブルの追加（csvから）
- dbWriteTable(conn = db, name = “Student”, value = “student.csv”, 
-     row.names = FALSE, header = TRUE)
- dbWriteTable(conn = db, name = “Class”, value = “class.csv”, 
-     row.names = FALSE, header = TRUE)
- dbWriteTable(conn = db, name = “School”, value = “school.csv”, 
-     row.names = FALSE, header = TRUE)
-
-Rのdataframeオブジェクトからの追加
-   # Import data frames into database
- dbWriteTable(conn = db, name = “Student”, value = Student, row.names = FALSE)
- dbWriteTable(conn = db, name = “Class”, value = Class, row.names = FALSE)
- dbWriteTable(conn = db, name = “School”, value = School, row.names = FALSE)
-
-
-
-
-db内部の確認
- dbListTables(db)                   # The tables in the database
- dbListFields(db, “School”)         # The columns in a table
- dbReadTable(db, “School”)          # The data in a table
-
-
-問題の人
-     顧客ID 初回来店年 初回来店店舗 郵便番号 DM送信可否 性別 誕生年代         備考
-6137   6137       2014            0       NA       拒否 不明       NA 会員情報無し
