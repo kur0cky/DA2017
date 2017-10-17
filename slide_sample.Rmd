@@ -1,0 +1,129 @@
+---
+title: "進捗報告"
+author: 黒木 裕鷹
+date: "2017年10月17日"
+output:
+  revealjs::revealjs_presentation:
+    theme: sky
+    highlight: pygments
+    center: true
+    fig_height: 4
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+# はじめに
+
+
+## 目次
+
+- データ解析コンペ
+- Mazda
+- データ handling
+
+そろそろ風呂敷を畳んでいきます
+
+# データ解析コンペ
+
+## やったこと
+
+会計履歴（レシート単位）を中心に概観していました
+
+- 客単価の調査
+- 売上の推移
+
+## データへの接続
+
+稗田さんのパソコンのデータベースにPostgresでアクセスしています。
+
+```{r library, include = FALSE}
+library(DBI)
+library(RPostgreSQL)
+library(tidyverse)
+library(lubridate)
+library(DT)
+```
+
+```{r db, include=FALSE}
+con <- dbConnect(PostgreSQL(), host="192.168.11.16", 
+                 port=5432, 
+                 dbname="datacom2017", 
+                 user="postgres", 
+                 password="postgres")
+
+scan_query <- function(query_path) {
+  return (
+    scan(query_path, what='', quote='', sep='\n', comment.char = '', encoding='UTF-8') %>% 
+      gsub(pattern='--.*$', replacement='') %>% # 正規表現でコメントアウトを消す
+      paste0(collapse=' ')
+  )
+}
+
+dbGetQuery(con,"SET CLIENT_ENCODING TO 'shift-jis';")
+```
+会計履歴データの構成
+```{r data, echo=FALSE}
+# 返品処理をした会計データの取得
+receipt <- dbGetQuery(con,
+                      "SELECT * FROM receipt_henpin_syori_fin")
+glimpse(receipt)
+```
+
+## データ期間の確認
+
+```{r date}
+receipt %>% summarise(from = min(dt),
+                      to = max(dt))
+```
+- 2015年7月1日 ~ 2017年6月30日
+- まるまる2年間のデータ
+
+# 12店舗全体での売上
+
+## 全期間
+```{r}
+receipt %>% 
+  summarise(in_tax = sum(in_tax),
+            count = n()) %>% 
+  mutate(unitPrice = round(in_tax/count))
+```
+- 2年間で約18億円の売上
+- 約15万件の会計
+- 客単価は約1.1万円
+
+## 客単価ヒストグラム
+```{r, echo=FALSE}
+hist(receipt$in_tax, 60,
+     xlab="客単価（円）",
+     main = "")
+```
+
+## 年次（全体）
+
+```{r yearly, echo=FALSE}
+receipt %>% 
+  mutate(year = year(dt)) %>% 
+  group_by(year) %>% 
+  summarise(in_tax = sum(in_tax),
+            count = n()) %>% 
+  mutate(unitPrice = round(in_tax/count))
+```
+- 2016年はフルでデータがあるので会計数は他の倍
+- 年ごとに単価の差は見られない。
+
+## 月次（全体）
+```{r, echo=FALSE}
+monthly <- receipt %>% 
+  mutate(year = year(dt),
+         month = month(dt)) %>% 
+  group_by(year, month) %>% 
+  summarise(in_tax = sum(in_tax),
+            count = n()) %>% 
+  mutate(unitPrice = round(in_tax/count))
+
+```
