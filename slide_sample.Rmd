@@ -5,7 +5,6 @@ date: "2017年10月17日"
 output:
   revealjs::revealjs_presentation:
     theme: sky
-    highlight: pygments
     center: true
     fig_height: 4
     df_print: paged
@@ -49,28 +48,12 @@ library(lubridate)
 library(DT)
 ```
 
-```{r db, include=FALSE}
-con <- dbConnect(PostgreSQL(), host="192.168.11.16", 
-                 port=5432, 
-                 dbname="datacom2017", 
-                 user="postgres", 
-                 password="postgres")
-
-scan_query <- function(query_path) {
-  return (
-    scan(query_path, what='', quote='', sep='\n', comment.char = '', encoding='UTF-8') %>% 
-      gsub(pattern='--.*$', replacement='') %>% # 正規表現でコメントアウトを消す
-      paste0(collapse=' ')
-  )
-}
-
-dbGetQuery(con,"SET CLIENT_ENCODING TO 'shift-jis';")
-```
 会計履歴データの構成
+
 ```{r data, echo=FALSE}
 # 返品処理をした会計データの取得
-receipt <- dbGetQuery(con,
-                      "SELECT * FROM receipt_henpin_syori_fin")
+
+receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
 glimpse(receipt)
 ```
 
@@ -82,6 +65,7 @@ receipt %>% summarise(from = min(dt),
 ```
 - 2015年7月1日 ~ 2017年6月30日
 - まるまる2年間のデータ
+
 
 # 12店舗全体での売上
 
@@ -117,13 +101,41 @@ receipt %>%
 - 年ごとに単価の差は見られない。
 
 ## 月次（全体）
-```{r, echo=FALSE}
+```{r, echo}
 monthly <- receipt %>% 
-  mutate(year = year(dt),
-         month = month(dt)) %>% 
-  group_by(year, month) %>% 
+  select(dt, in_tax) %>% 
+  mutate(dt = as.POSIXct(dt) ) %>% 
+  group_by(date = substring(strftime(dt), 1,7)) %>% 
   summarise(in_tax = sum(in_tax),
             count = n()) %>% 
   mutate(unitPrice = round(in_tax/count))
 
+head(monthly)
 ```
+
+## 月次売上
+```{r, echo=FALSE}
+ggplot(monthly,aes(x=date, y = in_tax)) + 
+  geom_point() + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+```
+
+- 1月の売上が明らかに少ない
+- 12月が多そう
+- 秋に減少傾向がある？
+
+## 月次会計数
+```{r, echo=FALSE}
+ggplot(monthly, aes(x=date, y=count))+
+  geom_line(aes(group=date))+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+```
+
+## 月次客単価
+```{r, echo=FALSE}
+ggplot(monthly, aes(x=date, y=unitPrice))+
+  geom_point()+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+```
+
+
