@@ -38,7 +38,8 @@ library(fastICA)
 # データ解析コンペ
 
 ```{r compe_data}
-receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
+#receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
+receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS")
 # これはズル
 ```
 
@@ -70,6 +71,7 @@ monthly <- receipt %>%
 ```
 
 エラーバー
+
 ```{r}
 ggplot(monthly,aes(x=month, y=unitPrice)) + 
   geom_line(size=1)+
@@ -104,7 +106,7 @@ w_day <- receipt %>%
 ```{r}
 w_day %>% 
   ggplot(aes(x=wday, y=in_tax))+
-  geom_bar(stat="identity", width=0.7)+
+  geom_bar(stat="identity", width=0.7, alpha=0.4)+
   ylim(0,max(w_day$in_tax + w_day$sd))+
   geom_errorbar(aes(ymin=in_tax-sd,
                   ymax=in_tax+sd))+
