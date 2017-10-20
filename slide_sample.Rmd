@@ -6,9 +6,11 @@ output:
   revealjs::revealjs_presentation:
     theme: sky
     center: true
-    fig_height: 4
+    fig_height: 3.5
     df_print: paged
 ---
+
+
 
 
 ```{r setup, include=FALSE}
@@ -23,9 +25,10 @@ knitr::opts_chunk$set(cache = TRUE)
 
 - データ解析コンペ
 - Mazda
-- データ handling
+- tidy な世界の調査1
 
-そろそろ風呂敷を畳んでいきます
+~~そろそろ風呂敷を畳んでいきます~~  
+~~Rmd でスライドを作って見たかった~~
 
 # データ解析コンペ
 
@@ -38,14 +41,14 @@ knitr::opts_chunk$set(cache = TRUE)
 
 ## データへの接続
 
-稗田さんのパソコンのデータベースにPostgresでアクセスしています。
+稗田さんのパソコンのデータベースにPostgresでアクセスしています。  
+~~研究室からしかアクセス出来ないので実は `readRDS()` している~~
 
 ```{r library, include = FALSE}
-library(DBI)
-library(RPostgreSQL)
 library(tidyverse)
 library(lubridate)
-library(DT)
+library(knitr)
+library(fastICA)
 ```
 
 会計履歴データの構成
@@ -59,10 +62,12 @@ glimpse(receipt)
 
 ## データ期間の確認
 
-```{r date}
+```{r date, echo=FALSE}
 receipt %>% summarise(from = min(dt),
-                      to = max(dt))
+                      to = max(dt)) %>% 
+  kable()
 ```
+
 - 2015年7月1日 ~ 2017年6月30日
 - まるまる2年間のデータ
 
@@ -70,12 +75,14 @@ receipt %>% summarise(from = min(dt),
 # 12店舗全体での売上
 
 ## 全期間
-```{r}
+```{r, echo=FALSE}
 receipt %>% 
   summarise(in_tax = sum(in_tax),
             count = n()) %>% 
-  mutate(unitPrice = round(in_tax/count))
+  mutate(unitPrice = round(in_tax/count)) %>% 
+  kable()
 ```
+
 - 2年間で約18億円の売上
 - 約15万件の会計
 - 客単価は約1.1万円
@@ -95,29 +102,35 @@ receipt %>%
   group_by(year) %>% 
   summarise(in_tax = sum(in_tax),
             count = n()) %>% 
-  mutate(unitPrice = round(in_tax/count))
+  mutate(unitPrice = round(in_tax/count)) %>% 
+  kable()
 ```
+
 - 2016年はフルでデータがあるので会計数は他の倍
 - 年ごとに単価の差は見られない。
 
 ## 月次（全体）
-```{r, echo}
+
+```{r monthly, echo=FALSE}
 monthly <- receipt %>% 
   select(dt, in_tax) %>% 
   mutate(dt = as.POSIXct(dt) ) %>% 
-  group_by(date = substring(strftime(dt), 1,7)) %>% 
+  group_by(month = month(dt)) %>%
   summarise(in_tax = sum(in_tax),
             count = n()) %>% 
   mutate(unitPrice = round(in_tax/count))
-
-head(monthly)
+kable(monthly)
 ```
+
+$\vdots$
 
 ## 月次売上
 ```{r, echo=FALSE}
-ggplot(monthly,aes(x=date, y = in_tax)) + 
-  geom_point() + 
-  theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+ggplot(monthly,aes(x=month, y=in_tax)) + 
+  geom_line(size=1)+
+  theme_bw()+
+  ylim(0,max(monthly$in_tax))+
+  scale_x_continuous(breaks=1:12)
 ```
 
 - 1月の売上が明らかに少ない
@@ -125,17 +138,287 @@ ggplot(monthly,aes(x=date, y = in_tax)) +
 - 秋に減少傾向がある？
 
 ## 月次会計数
+
 ```{r, echo=FALSE}
-ggplot(monthly, aes(x=date, y=count))+
-  geom_line(aes(group=date))+
-  theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+ggplot(monthly,aes(x=month, y=count)) + 
+  geom_line(size=1)+
+  theme_bw()+
+  ylim(0,max(monthly$count))+
+  scale_x_continuous(breaks=1:12)
 ```
+
+- 当然のようにほぼ同じ変化
 
 ## 月次客単価
 ```{r, echo=FALSE}
-ggplot(monthly, aes(x=date, y=unitPrice))+
-  geom_point()+
-  theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+ggplot(monthly,aes(x=month, y=unitPrice)) + 
+  geom_line(size=1)+
+  theme_bw()+
+  ylim(0,max(monthly$unitPrice))+
+  scale_x_continuous(breaks=1:12)
+```
+
+- ほぼ一定でした
+
+## 曜日ごと
+```{r weekly, echo=FALSE}
+w_day <- receipt %>% 
+  group_by(wday = wday(dt)) %>% 
+  summarise(in_tax = sum(in_tax),
+            count = n()) %>% 
+  mutate(unitPrice = in_tax/count)
+kable(w_day)
+```
+
+- 1~7 が日曜 ~ 土曜
+- 単価に差はなさそう
+- 美容室は火曜が定休日のところが多い
+- 土日の会計数はやはり多い
+- 会計数は火曜から土曜まで単調増加
+
+## 曜日別売上プロット
+
+```{r, echo=FALSE}
+w_day %>% 
+  ggplot(aes(x=wday, y=in_tax))+
+  geom_bar(stat="identity", width=0.7)+
+  theme_bw()
 ```
 
 
+# 店舗ごと
+
+## 全期間（店舗ごと）
+```{r, echo=FALSE}
+store <- readRDS("D:/Git/DataAnalysis2017/store.RDS") %>% 
+  select(store_id, store_name)
+```
+
+```{r storely, echo=FALSE}
+storely <- receipt %>% 
+  select(store_id, dt, in_tax) %>% 
+  group_by(store_id) %>% 
+  summarise(in_tax = sum(in_tax),
+            count = n(),
+            unitPrice = in_tax/count) %>% 
+  arrange(desc(in_tax)) %>% 
+  left_join(store,by="store_id") %>% 
+  select(store_name, in_tax, count, unitPrice)
+kable(storely)
+```
+
+メン中野店。。。
+
+## 会計数 vs 客単価
+
+```{r, echo=FALSE}
+storely %>% 
+  ggplot()+ 
+  geom_point(aes(x=count, y=unitPrice))+
+  theme_bw()+
+  ylim(0, max(storely$unitPrice))+
+  xlim(0,max(storely$count))+
+  geom_text(aes(x = count,
+                y = unitPrice,
+                label=store_name), size=4, vjust=2)
+```
+
+- 男のコスパ悪い
+- 店舗の広さ、スタッフの数が分からないが
+- なんとなくの性質は見えてきそう？
+
+
+# 顧客について
+
+## 期間内来店者
+
+```{r, echo=TRUE}
+receipt %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  nrow()
+```
+
+- 31710 人が来店
+
+```{r, echo=TRUE}
+receipt %>% 
+  group_by(customer_id) %>% 
+  summarise(count=n(), cs_point=max(cs_point)) %>% 
+  filter(count==1, cs_point==1) %>% 
+  nrow()
+```
+
+- 10546 人が累計来店回数 1, 期間内に 1 回来店
+
+
+## 今後の展望
+
+最終的には  
+1. モデル構築（学術的に高度なものが望ましい） 
+2. 何らかの知見を得る
+3. 何かを提案する
+
+の流れが必要
+
+- リピーターになる人とそうでない人の違いは何か
+- スタイリストのレコメンドができる？（小坪）
+
+# mazda
+
+## データ概観
+
+- 様々な溶接アームの、減速機交換前後における振動データがある
+- その中の一つのアームについて。**交換前**の系列
+
+```{r mazda plot, echo=FALSE}
+setwd("D:/mazda/data/交換前/A4 SF N1419 3軸交換前/J03 pro41")
+a.lf <- list.files(pattern = "A4")
+a.list <- lapply(a.lf, 
+               function(x) 
+                 read.csv(x, skip=70,nrow=5000)[,3])
+a.bind <- do.call(cbind, a.list)
+a.bind[,] %>% ts() %>% plot(main="N1419 pro 41 交換前")
+
+```
+
+
+## 独立成分分析(ICA)
+
+motivation : 混ざりあった信号から元の信号を取り出したい
+
+やってること
+
+1. 白色化（楕円を円に）
+2. ユニタリ変換（回転）
+
+## fast ICA
+
+R のパッケージ `fastICA` を試してみる。  
+
+使うのは先ほどの系列のうち最初の三つ（変化のタイミングがほぼ同じ）  
+散布図は以下のよう
+
+```{r ,echo=FALSE}
+a.bind[,1:3] %>% pairs()
+```
+
+## 結果
+
+- 取り合えず3つの時系列に分解してみた
+- 分解後の時系列は次のようである
+
+```{r, echo=FALSE}
+result.ica <- fastICA(a.bind[,1:3],
+                      n.comp=3)
+ts(result.ica$S) %>% plot()
+```
+
+- 白色化をはさんでいるので標準化されている
+- 系列 3 のノイズが減ったように見える
+
+## 散布図
+
+散布図は以下のよう。  
+元データよりカオスに、うまくいってない
+
+```{r, echo=FALSE}
+result.ica$S %>% pairs()
+```
+
+## 問題点
+
+- いくつの系列を用いればよいのか
+- 分解後の系列の数をいくつに決めるのか
+- 動作の始点を厳密に合わせる必要があるのでは
+
+# tidyな世界の調査 1
+
+## tidy dataとは何か
+
+- tidy （整然とした） data
+- Rstudio の祖 Hadley Wickham が提唱している
+- みんな大好き `dplyr` や `ggplot2` も tidy data を扱うことで真価を発揮する
+- tidy data $\quad\leftrightarrow\quad$ messy（雑然とした）data
+- messy data の方が人間にとって分かり易い場合があるが、 tidy data  の方が圧倒的に扱い易い
+
+## tidy dataの条件
+
+1. 1つの列には1つの変数
+2. 1つの行には1つの観測
+3. 同種の観測が1つのテーブルを構成する
+
+
+## tidy と messy
+
+- messyな例
+```{r, echo=FALSE}
+messy <- data.frame(場所=c("東京","沖縄","新潟"),
+                    朝=c("晴れ", "曇り","晴れ"),
+         昼=c("曇り", "雨", "雨"),
+         夜=c("雪", "雪", "雪"))
+
+kable(messy)
+```
+
+- tidyな例
+```{r, echo=FALSE, warning=FALSE}
+messy %>% 
+gather(key=時間,value=天気,朝,昼,夜) %>% 
+  kable()
+```
+
+## 有用なパッケージ群
+
+
+![tidyverse](https://rviews.rstudio.com/post/2017-06-09-What-is-the-tidyverse_files/tidyverse1.png )
+
+（出展 : RStudio のブログ "Rviews" ）
+
+ 
+## tibble
+
+- tibble : より自由度の高いdata.frame  
+- 要素に list 型や S3 クラスを入れることが可能  
+- 1行で1つの観測、1列に1種の変数　が可能に
+
+```{r, include=FALSE, warning=FALSE}
+nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"))
+```
+```{r,echo=FALSE}
+nc %>%
+ as_tibble() %>%
+ select(NAME, FIPS, AREA, geometry) 
+```
+
+## 
+
+- tibble の要素に地理情報のポリゴンを入れられる
+- 次のプロットが簡単にできる
+
+```{r, echo=FALSE}
+nc %>%
+ ggplot(aes(geometry = geometry, fill = AREA)) +
+ geom_sf() +
+ coord_sf(crs = sf::st_crs(nc)) 
+```
+
+
+##
+```{r, echo=FALSE}
+receipt %>% 
+  select(dt,regi_staff) %>% 
+  group_by(date=substring(dt,1,7),regi_staff) %>% 
+  summarise(n = n()) %>% 
+  arrange(regi_staff) %>% 
+  spread(regi_staff,n) %>% 
+  mutate_all(funs(ifelse(is.na(.),0,.))) %>%
+  gather(key=regi_staff, value=n, -date) %>% 
+  group_by(regi_staff) %>% 
+  filter(min(n)==0) %>% 
+  spread(regi_staff,n) %>% datatable() 
+  .[,-1] %>% as.matrix() %>% 
+  heatmap(Colv = NA, Rowv = NA)
+
+
+```

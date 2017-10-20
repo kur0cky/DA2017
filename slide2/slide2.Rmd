@@ -1,0 +1,144 @@
+---
+title: "進捗報告2"
+author: "Yutaka Kuroki"
+date: "2017年10月19日"
+output:
+  revealjs::revealjs_presentation:
+    theme: sky
+    center: true
+    fig_height: 3.5
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(fastICA)
+```
+
+# はじめに
+
+## 目次
+
+- データ解析コンペ
+- Mazda
+- tidy な世界の調査 2
+
+~~風呂敷が畳まるどころか広がって・・・~~
+
+~~懲りずにRmdでスライド・・・~~
+
+# データ解析コンペ
+
+```{r compe_data}
+receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
+# これはズル
+```
+
+
+## やったこと
+
+- 先週作成した図の拡張
+- 非リピーターについての調査
+- エース級スタイリストについての調査
+
+# 先週作成した図の拡張
+
+## 客単価 barplot
+
+男女の積み上げ bar
+
+## 月次客単価
+
+```{r monthly}
+monthly <- receipt %>% 
+  select(dt, in_tax) %>% 
+  mutate(dt = as.POSIXct(dt) ) %>% 
+  group_by(month = month(dt)) %>%
+  mutate(sd = sd(in_tax)) %>% 
+  summarise(in_tax = sum(in_tax),
+            count = n(),
+            sd = mean(sd)) %>% 
+  mutate(unitPrice = round(in_tax/count))
+```
+
+エラーバー
+```{r}
+ggplot(monthly,aes(x=month, y=unitPrice)) + 
+  geom_line(size=1)+
+  theme_bw()+
+  ylim(0,max(monthly$unitPrice + monthly$sd))+
+  geom_errorbar(aes(ymin=unitPrice-sd,
+                    ymax=unitPrice+sd))
+  scale_x_continuous(breaks=1:12)
+```
+
+## 月次売上
+
+積み上げ棒グラフ（男女別）
+
+## 曜日別売上
+
+男女別積み上げ棒グラフ  
+エラーバー付き総売り上げ（週ごとのサンプル）
+
+```{r}
+w_day <- receipt %>% 
+  select(dt, in_tax) %>% 
+  group_by(dt) %>% 
+  summarise(in_tax = sum(in_tax)) %>% 
+  group_by(wday = wday(dt)) %>% 
+  mutate(sd = sd(in_tax)) %>% 
+  summarise(in_tax = mean(in_tax),
+            count = n(),
+            sd = mean(sd)) 
+```
+
+```{r}
+w_day %>% 
+  ggplot(aes(x=wday, y=in_tax))+
+  geom_bar(stat="identity", width=0.7)+
+  ylim(0,max(w_day$in_tax + w_day$sd))+
+  geom_errorbar(aes(ymin=in_tax-sd,
+                  ymax=in_tax+sd))+
+  theme_bw()
+```
+
+
+## 会計数 vs 客単価
+
+なんかバルーンプロット  
+スタイリストの数？
+リピーターの数？
+
+# 非リピーター
+
+## 定義
+
+- 期間 (2015/7/1 ~ 2017/6/30) に一度しか来店してない
+- 累積来店回数が一回
+
+
+# エース級スタイリスト
+
+## あ
+
+barplot （降順）を書け
+
+- 著しく売り上げが多い上位10人を見てみる
+- 一部のスタイリストに売り上げが集中している  
+- ~~さながらホスト~~
+
+# Mazda
+
+# Tidy な世界の調査 2
+
+
+複数店舗来店者みたら面白いかも

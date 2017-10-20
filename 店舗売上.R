@@ -150,3 +150,33 @@ receipt.tmp %>%
   summarise(in_tax = sum(in_tax)) %>% 
   spread(store_id, in_tax) 
   
+
+
+
+
+```{r}
+customer <- receipt %>% 
+  group_by(customer_id) %>% 
+  summarize(count = n(),cs_point=max(cs_point)) %>% 
+  filter(count == 1, cs_point==1) %>% 
+  select(customer_id)
+```
+
+
+```{r}
+stylist <- receipt %>% 
+  group_by(customer_id, regi_staff) %>% 
+  summarise(count =n() ) %>% 
+  inner_join(customer ,by = "customer_id")
+
+tmp <- receipt %>% 
+  group_by(regi_staff) %>% 
+  summarise(count=n())
+
+inner_join(stylist, tmp, by="regi_staff") %>% 
+  arrange(desc(count.y)) %>% 
+  filter(regi_staff != 0)
+
+
+```
+
