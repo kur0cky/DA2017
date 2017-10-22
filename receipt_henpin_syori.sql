@@ -1,1 +1,0 @@
-SELECT * FROM receipt_henpin_syori;

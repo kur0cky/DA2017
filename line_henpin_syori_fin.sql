@@ -1,1 +1,0 @@
-SELECT * FROM line_henpin_syori_fin_1;

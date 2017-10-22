@@ -40,12 +40,12 @@ library(knitr)
 # データ解析コンペ
 
 ```{r compe_data}
-receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
-#receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS")
+#receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
+receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS")
 # これはズル
 ```
 
-```{r data}
+```{r data, eval=FALSE}
 customer <- read.csv("D:/Git/DataAnalysis2017/data/customer.csv",
                      fileEncoding = "utf-8")
 store <- read.csv("D:/Git/DataAnalysis2017/data/store.csv",
@@ -57,6 +57,17 @@ product <- read.csv("D:/Git/DataAnalysis2017/data/product.csv",
                   fileEncoding = "utf-8")
 ```
 
+```{r data2}
+customer <- read.csv("E:/Git/DataAnalysis2017/data/customer.csv",
+                     fileEncoding = "utf-8")
+store <- read.csv("E:/Git/DataAnalysis2017/data/store.csv",
+                  fileEncoding = "utf-8")
+staff <- read.csv("E:/Git/DataAnalysis2017/data/staff.csv",
+                  fileEncoding = "utf-8") %>% 
+  rename(store_id = store_id_num)
+product <- read.csv("E:/Git/DataAnalysis2017/data/product.csv",
+                  fileEncoding = "utf-8")
+```
 
 ## やったこと
 
@@ -357,8 +368,26 @@ customer_repeat %>%
   group_by(repeater, birth_age) %>%
   filter(birth_age != 0) %>% 
   summarise(count=n()) %>% 
-  ggplot(aes(x=birth_age, y=count)) + 
-  geom_histogram(stat="identity")
+  ggplot(aes(x=birth_age, y=count, fill=repeater)) + 
+  geom_bar(stat="identity")+
+  scale_x_continuous(breaks = seq(1920,2010,10))+
+  theme_bw()
+```
+
+##割合
+
+```{r}
+customer_repeat %>% 
+  group_by(repeater, birth_age) %>%
+  filter(birth_age != 0) %>% 
+  summarise(count=n()) %>% 
+  ungroup() %>% 
+  group_by(birth_age) %>% 
+  mutate(rate = count/sum(count)) %>% 
+  ggplot(aes(x=birth_age, y=rate, fill=repeater)) + 
+  geom_bar(stat="identity")+
+  scale_x_continuous(breaks = seq(1920,2010,10))+
+  theme_bw()
 ```
 
 
@@ -367,7 +396,7 @@ customer_repeat %>%
 理想：リピーターと非リピーターの違いは何。  
 - 性別o
 - 住所
-- 年齢
+- 年齢o
 - 店舗
 - 来店店舗
 - クーポン
@@ -378,11 +407,23 @@ customer_repeat %>%
 初回店舗の数を会計数で割る
 
 ##
+
+初回来店店舗ごとの  
+非リピーター / 顧客
+
 ```{r}
 customer_repeat %>% 
   group_by(repeater, first_store) %>% 
   summarise(count=n()) %>% 
-  spread(repeater, count,sep="FALSE") 
+  filter(first_store != 0) %>% 
+  spread(repeater, count,sep="") %>% 
+  mutate(rate = repeaterFALSE/(repeaterTRUE + repeaterFALSE)) %>% 
+  left_join(store, by=c("first_store"="store_id")) %>% 
+  ggplot()+
+  geom_bar(aes(x=factor(store_name),
+               y=rate),
+           stat="identity")+
+  labs(y="non-repeater rate")
   
 ```
 
