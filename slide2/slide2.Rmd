@@ -21,6 +21,8 @@ knitr::opts_chunk$set(cache = TRUE)
 library(tidyverse)
 library(lubridate)
 library(fastICA)
+library(modeest)
+library(knitr)
 ```
 
 # はじめに
@@ -38,9 +40,21 @@ library(fastICA)
 # データ解析コンペ
 
 ```{r compe_data}
-#receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
-receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS")
+receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS")
+#receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS")
 # これはズル
+```
+
+```{r data}
+customer <- read.csv("D:/Git/DataAnalysis2017/data/customer.csv",
+                     fileEncoding = "utf-8")
+store <- read.csv("D:/Git/DataAnalysis2017/data/store.csv",
+                  fileEncoding = "utf-8")
+staff <- read.csv("D:/Git/DataAnalysis2017/data/staff.csv",
+                  fileEncoding = "utf-8") %>% 
+  rename(store_id = store_id_num)
+product <- read.csv("D:/Git/DataAnalysis2017/data/product.csv",
+                  fileEncoding = "utf-8")
 ```
 
 
@@ -52,9 +66,8 @@ receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS")
 
 # 先週作成した図の拡張
 
-## 客単価 barplot
 
-男女の積み上げ bar
+
 
 ## 月次客単価
 
@@ -67,49 +80,108 @@ monthly <- receipt %>%
   summarise(in_tax = sum(in_tax),
             count = n(),
             sd = mean(sd)) %>% 
-  mutate(unitPrice = round(in_tax/count))
+  mutate(perCustomer = round(in_tax/count))
 ```
 
 エラーバー
 
 ```{r}
-ggplot(monthly,aes(x=month, y=unitPrice)) + 
+ggplot(monthly,aes(x=month, y=perCustomer)) + 
   geom_line(size=1)+
   theme_bw()+
-  ylim(0,max(monthly$unitPrice + monthly$sd))+
-  geom_errorbar(aes(ymin=unitPrice-sd,
-                    ymax=unitPrice+sd))
+  ylim(0,max(monthly$perCustomer + monthly$sd))+
+  geom_errorbar(aes(ymin=perCustomer-sd,
+                    ymax=perCustomer+sd),
+                width=0.3)+
   scale_x_continuous(breaks=1:12)
 ```
 
-## 月次売上
+- sd 大きすぎますね
+- 月ごとの客単価のプロットは変わらない。
+- ~~またゴミを作ってしまった。。。~~
+- バイオリンプロット重ねてもいいかも
 
-積み上げ棒グラフ（男女別）
-
-## 曜日別売上
-
-男女別積み上げ棒グラフ  
-エラーバー付き総売り上げ（週ごとのサンプル）
+## 月次総売上
 
 ```{r}
-w_day <- receipt %>% 
-  select(dt, in_tax) %>% 
-  group_by(dt) %>% 
-  summarise(in_tax = sum(in_tax)) %>% 
-  group_by(wday = wday(dt)) %>% 
-  mutate(sd = sd(in_tax)) %>% 
-  summarise(in_tax = mean(in_tax),
-            count = n(),
-            sd = mean(sd)) 
+receipt %>% 
+  select(dt, customer_id, in_tax) %>% 
+  left_join(customer, by="customer_id") %>% 
+  select(dt, customer_id, in_tax, sex) %>% 
+  group_by(month = month(dt), sex) %>% 
+  summarise(sales = sum(in_tax)) %>%
+  filter(sex =="女性" | sex =="男性") %>% 
+  
+  ggplot(aes(x=month, y=sales, fill=sex))+
+  geom_bar(stat="identity")+
+  geom_line()+
+  scale_x_continuous(breaks=1:12)+
+  theme_bw()
 ```
 
+- 売上変化の源泉は女性にあった
+- 性別がNA, 不明は除いてある
+
+## 男女別曜日売上
+
+
+
 ```{r}
-w_day %>% 
-  ggplot(aes(x=wday, y=in_tax))+
-  geom_bar(stat="identity", width=0.7, alpha=0.4)+
-  ylim(0,max(w_day$in_tax + w_day$sd))+
-  geom_errorbar(aes(ymin=in_tax-sd,
-                  ymax=in_tax+sd))+
+receipt %>% 
+  select(dt, customer_id, in_tax) %>% 
+  left_join(customer, by="customer_id") %>% 
+  select(dt, sex, in_tax) %>% 
+  group_by(wday = wday(dt), sex) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  filter(sex == "女性" | sex == "男性") %>% 
+  
+  ggplot(aes(x=wday, y=sales, fill=sex))+
+  geom_bar(stat="identity", colour="black")+
+  scale_x_continuous(breaks=1:12)+
+  theme_bw()
+```
+
+## 割合ver
+
+```{r}
+receipt %>% 
+  select(dt, customer_id, in_tax) %>% 
+  left_join(customer, by="customer_id") %>% 
+  select(dt, sex, in_tax) %>% 
+  group_by(wday = wday(dt), sex) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  filter(sex == "女性" | sex == "男性") %>% 
+  ungroup() %>% 
+  group_by(wday) %>% 
+  mutate(percent_sales = sales/sum(sales)) %>% 
+  
+  ggplot(aes(x=wday, y=percent_sales, fill=sex))+
+  geom_bar(stat="identity", colour="black")+
+  scale_x_continuous(breaks=1:7)+
+  theme_bw()
+```
+
+- 男は黙って土日に髪を切る
+
+## 
+
+曜日平均売上。エラーバー付き
+
+```{r}
+receipt %>% 
+  select(dt, in_tax) %>% 
+  group_by(dt) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  group_by(wday=wday(dt)) %>% 
+  summarise(mean_sales = mean(sales),
+            sd_sales = sd(sales)) %>% 
+  
+  ggplot(aes(x=wday))+
+  geom_bar(aes(y=mean_sales), stat="identity", alpha=0.8)+
+  geom_errorbar(aes(ymin = mean_sales - sd_sales,
+                    ymax = mean_sales + sd_sales),
+                width=0.25)+
+  scale_x_continuous(breaks=1:7)+
   theme_bw()
 ```
 
@@ -117,8 +189,67 @@ w_day %>%
 ## 会計数 vs 客単価
 
 なんかバルーンプロット  
-スタイリストの数？
-リピーターの数？
+```{r}
+# 各店舗のスタッフの数
+staff_count <- staff %>% 
+  group_by(store_id) %>% 
+  summarise(count_staff = n())
+```
+
+
+```{r}
+storely <- receipt %>% 
+  select(store_id, dt, in_tax) %>% 
+  group_by(store_id) %>% 
+  summarise(in_tax = sum(in_tax),
+            count = n(),
+            perCustomer = in_tax/count) %>% 
+  arrange(desc(in_tax)) %>% 
+  left_join(store,by="store_id") %>% 
+  left_join(staff_count, by="store_id") %>% 
+  select(store_name, in_tax, count, perCustomer, count_staff) 
+  
+ggplot(storely)+
+  geom_point(aes(x=count, y=perCustomer, size=count_staff),
+             shape=21,
+             colour="black",
+             fill="cornsilk")+
+  scale_size_area(max_size=10)+
+  geom_text(aes(x=count, y=perCustomer, label=store_name), size=4, 
+            vjust="inward", hjust="inward")+
+  theme_bw()
+  
+```
+
+
+## 辞めてそうなスタッフ
+
+- 一回も担当してない月のあるスタッフを抽出
+- 一番多い会計数を1にした（スタッフごとに）
+
+```{r}
+receipt %>% 
+  select(dt,
+         regi_staff) %>% 
+  group_by(date=substring(dt,1,7),
+           regi_staff) %>% 
+  summarise(n = n()) %>% 
+  spread(regi_staff,
+         n) %>% 
+  mutate_all(funs(ifelse(is.na(.),0,.))) %>%
+  gather(key=regi_staff, 
+         value=n,
+         -date) %>% 
+  group_by(regi_staff) %>% 
+  filter(min(n)==0) %>% 
+  mutate(rate = n/max(n)) %>% 
+  ggplot(aes(x=regi_staff,
+             y=date,
+             fill=rate))+
+  geom_tile()
+
+```
+
 
 # 非リピーター
 
@@ -126,17 +257,220 @@ w_day %>%
 
 - 期間 (2015/7/1 ~ 2017/6/30) に一度しか来店してない
 - 累積来店回数が一回
+- とりあえずリピーターか非リピーターを示すダミー変数を用意する
 
+```{r customer_repeater}
+customer_repeat <- receipt %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count == 1,
+         cumComing == 1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id, repeater) %>% 
+  right_join(customer, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+
+```
+
+```{r}
+customer_repeat %>% 
+  group_by(repeater, sex) %>% 
+  summarise(count=n()) %>%
+  filter(sex != "不明") %>%
+  ungroup() %>% 
+  group_by(repeater) %>% 
+  mutate(rate = count/sum(count)) %>% kable()
+#  ggplot()+
+#  geom_bar(aes(x=repeater, y=rate, fill=sex),
+#           stat="identity",
+#           colour="black")+
+#  theme_bw()
+  
+```
+
+とりあえず男女差はない
+
+## 会計
+
+```{r}
+customer_repeat %>% 
+  select(customer_id, repeater) %>% 
+  full_join(receipt, by="customer_id") %>% 
+  group_by(repeater) %>% 
+  summarise(sales = sum(in_tax, na.rm=TRUE),
+            count = n(),
+            sales/count) %>% 
+  kable()
+```
+
+やっぱ非リピーターの単価は安いよね  
+customer_id が NA になってるところは何だっけ
+
+## 月次売上（repeater or NOT ）
+
+```{r}
+receipt %>% 
+  select(dt, customer_id, in_tax) %>% 
+  left_join(customer_repeat, by="customer_id") %>% 
+  select(repeater, dt, customer_id, in_tax, sex) %>% 
+  group_by(repeater,month = month(dt), sex) %>% 
+  summarise(sales = sum(in_tax)) %>%
+  filter(sex =="女性" | sex =="男性") %>% 
+  
+  ggplot(aes(x=month, y=sales, fill=sex))+
+  geom_bar(stat="identity")+
+  geom_line()+
+  scale_x_continuous(breaks=1:12)+
+  facet_wrap(~repeater)+
+  theme_bw()
+```
+
+
+## スケール合わせない
+
+```{r}
+receipt %>% 
+  select(dt, customer_id, in_tax) %>% 
+  left_join(customer_repeat, by="customer_id") %>% 
+  select(repeater, dt, customer_id, in_tax, sex) %>% 
+  group_by(repeater,month = month(dt), sex) %>% 
+  summarise(sales = sum(in_tax)) %>%
+  filter(sex =="女性" | sex =="男性") %>% 
+  
+  ggplot(aes(x=month, y=sales, fill=sex))+
+  geom_bar(stat="identity")+
+  geom_line()+
+  scale_x_continuous(breaks=1:12)+
+  facet_wrap(~repeater, scale="free_y")+
+  theme_bw()
+```
+
+これは面白いかもしれない
+
+## 年齢
+
+birth_age が 0 の人まだいる問題。解決しなきゃ
+
+```{r}
+customer_repeat %>% 
+  group_by(repeater, birth_age) %>%
+  filter(birth_age != 0) %>% 
+  summarise(count=n()) %>% 
+  ggplot(aes(x=birth_age, y=count)) + 
+  geom_histogram(stat="identity")
+```
+
+
+## 何をみたいか
+
+理想：リピーターと非リピーターの違いは何。  
+- 性別o
+- 住所
+- 年齢
+- 店舗
+- 来店店舗
+- クーポン
+- 単価o
+- カットのランク
+- カット以外の商品の購買
+
+初回店舗の数を会計数で割る
+
+##
+```{r}
+customer_repeat %>% 
+  group_by(repeater, first_store) %>% 
+  summarise(count=n()) %>% 
+  spread(repeater, count,sep="FALSE") 
+  
+```
 
 # エース級スタイリスト
 
-## あ
+## 概観
 
-barplot （降順）を書け
+複数人での担当は除いてある
 
-- 著しく売り上げが多い上位10人を見てみる
+```{r staffly}
+staffly <- receipt %>% 
+  select(dt, 
+         regi_staff, 
+         in_tax) %>% 
+  left_join(staff, 
+            by=c("regi_staff"="staff_id")) %>% 
+  group_by(regi_staff) %>% 
+  summarise(sales = sum(in_tax),
+            count = n(),
+            store_id=mfv(store_id)) %>% 
+  left_join(store, 
+            by="store_id") %>% 
+  select(-lat, -long, -f)
+```
+
+```{r}
+staffly %>% 
+  arrange(desc(sales)) %>% 
+  filter(regi_staff != 0) %>% 
+  
+  ggplot()+
+  geom_bar(aes(x=reorder(factor(regi_staff),sales, mean),
+               y=sales),
+           stat="identity",
+           alpha=0.5)+
+  labs(x="staff id")+
+  theme_bw()
+```
+
 - 一部のスタイリストに売り上げが集中している  
 - ~~さながらホスト~~
+
+## エース級
+
+所属店舗には会計の最頻値 `modeest::mfv()` を用いた
+ 
+```{r staff_rank}
+staffly %>% 
+  arrange(desc(sales)) %>% 
+  filter(count > mean(count, na.rm=TRUE)*2.5, regi_staff != 0) %>% 
+  
+  ggplot()+
+  geom_bar(aes(x=reorder(factor(regi_staff),sales, mean),
+               y=sales),
+           stat="identity",
+           alpha=0.5)+
+  geom_text(aes(x=reorder(factor(regi_staff),sales, mean),
+                y=sales,
+                label=store_name),
+            vjust="inward",
+            hjust="iniward")+
+  labs(x="staff id")+
+  theme_bw()
+```
+
+- どう掘り下げていいのか分からない
+
+## 店舗別
+
+スケールを合わせてない  
+あくまでも店舗内でのエースを見たい
+
+```{r}
+staffly %>% 
+  filter(regi_staff != 0) %>% 
+  arrange(desc(sales)) %>% 
+  ggplot()+
+  geom_bar(aes(x=reorder(factor(regi_staff),sales, mean),
+               y=sales),
+           stat="identity",
+           alpha=0.5)+
+  facet_wrap(~store_name, scales="free")+
+  
+  labs(x="staff id")+
+  theme_bw()
+```
+
+- 上大岡やばくね（やばい）
 
 # Mazda
 
