@@ -1,0 +1,147 @@
+---
+title: "売上のメカニズム"
+author: "Yutaka Kuroki"
+date: "2017年10月26日"
+output:
+  revealjs::revealjs_presentation:
+    theme: default
+    center: true
+    fig_height: 3.5
+    df_print: paged
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(fastICA)
+library(modeest)
+library(knitr)
+library(prophet)
+library(plotly)
+```
+
+```{r data_lab, include=FALSE}
+receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+customer.tmp <- read_csv("E:/Git/DataAnalysis2017/data/customer.csv")
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+store <- read_csv("E:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("E:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+line <- read_csv("E:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+
+# introduction
+
+## toc
+
+1. 前回までの流れ
+2. 残差についてみる
+3. 店舗ごとに見る
+
+## 現状
+
+- データをひたすら概観していた
+- それ以上のアプローチが分からない
+- 球面クラスタリングがかなり気になっている
+
+# 前回までの流れ
+
+## 概要
+
+- おまけで一般化加法モデルを試した
+- 季節性を加えた
+- 見た目上はうまく行ってそうだった
+
+## 日次総売上
+
+```{r daily_total_sales}
+receipt %>% 
+  group_by(dt) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  
+  ggplot(aes(x=dt, y=sales))+
+  geom_line()+
+  theme_minimal()+
+  labs(x="year - month")
+```
+
+## GAM
+
+- 一般化加法モデルを適用してみた。  
+- 実装の簡略化のため、 facebook のパッケージ `prophet` を用いた
+
+```{r prophet, include=FALSE}
+fit <- prophet(df = receipt %>% 
+                  group_by(dt) %>% 
+                  summarise(sales = sum(in_tax)) %>% 
+                  rename(ds=dt,
+                         y=sales))
+future <- make_future_dataframe(fit, periods=30) 
+forecast <- predict(fit, future)
+```
+
+```{r prophet_plot}
+p <- plot(fit, forecast)
+ggplotly(p)
+```
+
+## 季節性
+
+```{r prophet_component_plot}
+prophet_plot_components(fit, forecast)
+```
+
+
+# 店舗ごと
+
+```{r}
+df <-receipt %>% 
+  group_by(dt, store_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  rename(ds = dt,
+         y = sales) %>% 
+  group_by(store_id) %>% 
+  nest() %>% 
+  mutate(fit = map(data, function(df)  prophet(df)))  %>% 
+  mutate(future = map(fit, function(x) make_future_dataframe(x, periods=30) )) %>% 
+  mutate(forecast = map2(fit, future, predict)) %>% 
+  mutate(plot = map2(fit, forecast, prophet_plot_components ))
+```
+
+```{r}
+df %>% plot()
+```
+
