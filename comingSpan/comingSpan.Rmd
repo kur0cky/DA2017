@@ -1,0 +1,295 @@
+---
+title: "comingSpan"
+author: "Yutaka Kuroki"
+date: "2017年10月26日"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    self_contained: true
+    thumbnails: false
+    lightbox: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+                 cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(modeest)
+library(knitr)
+library(magrittr)
+library(prophet)
+library(plotly)
+```
+
+```{r data_laptop, include=FALSE}
+receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+customer.tmp <- read_csv("D:/Git/DataAnalysis2017/data/customer.csv")
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+store <- read_csv("D:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("D:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("D:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+# はじめに
+
+顧客の来店について主に見ていく。  
+着目していくポイントは主に
+
+- リピーターと非リピーターの定義について
+- リピーターの来店頻度
+
+# リピーターと非リピーターの定義
+
+前回のスライドでは非リピーターの定義を
+
+- 期間内の来店回数が1回
+- 累計来店回数が1回
+
+としていた。しかし今回の調査により、上記の定義ではあまり良くない気がしてきた。  
+以下の調査では上記の定義を仮定して行っている。
+
+## リピーターの期間内来店
+
+リピーターの中で、期間内来店が1回の人がいた
+
+```{r repeater_once}
+customer %>% 
+  filter(repeater == TRUE) %>% 
+  select(customer_id) %>% 
+  left_join(receipt,
+             by = "customer_id") %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count == 1) %>% nrow()
+```
+
+2858人。非リピーターの入れてしまってもいいかもしれない。
+
+| | リピーター | 非リピータ |
+|:-----------|------------:|:------------:|
+| 1回しか来てない | 2858 | 10546 |
+| 2回以上来てる | 18458 | 0 |
+
+期間内来店回数のヒストグラムは次のよう。会員情報無し系は除いた
+
+```{r repeater_coming_plot}
+receipt %>% 
+  left_join(customer, by="customer_id") %>% 
+  filter(is.na(comment) == TRUE) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>%
+  filter(count > 1) %>% 
+# 以下作図
+  ggplot(., aes(x=count)) +
+  geom_density(fill="blue", alpha=0.5)+
+  scale_x_continuous(breaks = seq(0,250,50))+
+  theme_bw()
+
+```
+
+
+```{r repeater_coming_summary}
+receipt %>% 
+  left_join(customer, by="customer_id") %>% 
+  filter(is.na(comment) == TRUE) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>%
+  .$count %>% summary()
+```
+
+中央値2回、平均5回、最大255回ってもうひどい。
+
+- まともなリピーターだけ抽出することに価値があるのでは？
+- リピーターの定義を見直そう
+
+## めちゃ来店してるやつ
+
+ためしに期間内で30回以上来店してる顧客についてヒストグラムを作成してた
+
+```{r coming_manytime_density}
+receipt %>% 
+  left_join(customer, by="customer_id") %>% 
+  filter(is.na(comment) == TRUE) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count != 1) %>% 
+  
+  ggplot(aes(x=count)) +
+  geom_histogram(fill="blue", alpha=0.5, colour="black")+
+  scale_x_continuous(limits=c(30,300),
+                     breaks=seq(25,300,25))+
+  labs(x="来店回数",y ="人数")+
+  theme_bw()
+```
+
+結構多い。ちなみに、250回来てるやつはcustomer_id <NA>だった。
+
+それ以外のtop2について
+
+```{r coming_top2}
+receipt %>% 
+  left_join(customer, by="customer_id") %>% 
+  filter(is.na(comment) == TRUE) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 80,
+         is.na(customer_id) == FALSE) %>% 
+  left_join(line, by="customer_id") %>% 
+  select(customer_id, count, product_name) %>% 
+  group_by(customer_id, count) %>% 
+  nest() %>% kable()
+```
+
+小学生以下？
+
+
+一番買ってるものは以下のよう
+```{r top2_mode}
+receipt %>% 
+  left_join(customer, by="customer_id") %>% 
+  filter(is.na(comment) == TRUE) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 80,
+         is.na(customer_id) == FALSE) %>% 
+  left_join(line, by="customer_id") %>% 
+  select(customer_id, count, product_name) %>% 
+  group_by(customer_id, count) %>% 
+  nest() %>% 
+  mutate(mode_cut = map(data,
+                        function(df) names(sort(table(df), decreasing=TRUE))[1])) %>% 
+  unnest(mode_cut, .drop=TRUE)
+```
+
+
+# 来店間隔
+
+2回以上来店しているリピーターに関して、来店間隔の平均を計算する。会員情報無し系は除いた
+
+```{r span}
+span <- customer %>% 
+  filter(is.na(comment) == TRUE, # この作業をするために冗長っぽいコード
+         repeater == TRUE) %>%  
+  select(customer_id) %>% 
+  left_join(receipt,
+             by = "customer_id") %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count != 1) %>% 
+  left_join(receipt,
+             by = "customer_id") %>% 
+  select(customer_id, 
+         dt, 
+         in_tax) %>% 
+  group_by(customer_id) %>% 
+  summarise(dt_max_min = max(dt) - min(dt), # max - min
+            count = n(),
+            sales = sum(in_tax),
+            perCustomer = sales/count,
+            span = dt_max_min/(count-1)) 
+```
+
+
+同じ日に2回以上来たっきりのやつがいる
+
+```{r span=0}
+span %>% 
+  filter(span == 0)
+```
+
+
+各顧客の平均間隔を出して、その密度曲線を描いた
+
+```{r span_density}
+span %>%
+  mutate(span = as.numeric(span)) %>% 
+  ggplot()+
+  geom_density(aes(x=span),
+               fill="blue",
+               alpha=0.5)+
+  scale_x_continuous(breaks=seq(0,600,60))+
+  theme_bw()
+span$span %>% 
+  as.numeric() %>% 
+  summary()
+```
+
+平均90日、中央値66日の間隔
+
+平均来店間隔が0日のやつ謎すぎる。
+
+非リピーターの定義見直してもいいかも
+
+## 平均来店間隔が0の人々
+
+平均来店間隔が0の人が何を買っているのか  
+
+```{r span_0_product}
+span %>% 
+  filter(span == 0) %>% 
+  select(customer_id) %>% 
+  left_join(line,
+            by = "customer_id") %>% 
+  select(customer_id,product_name) %>% 
+  nest(product_name, .key=products) %>% kable()
+```
+
+
+# おまけ
+#prophet
+```{r}
+fit <- prophet(df = receipt %>% 
+                  group_by(dt) %>% 
+                  summarise(sales = sum(in_tax)) %>% 
+                  rename(ds=dt,
+                         y=sales))
+future <- make_future_dataframe(fit, periods=30) 
+head(future)
+forecast <- predict(fit, future)
+p <- plot(fit, forecast)
+p
+ggplotly(p)
+prophet_plot_components(fit, forecast)
+```

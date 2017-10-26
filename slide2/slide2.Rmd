@@ -25,7 +25,6 @@ library(lubridate)
 library(fastICA)
 library(modeest)
 library(knitr)
-library(plotly)
 ```
 
 # introduction

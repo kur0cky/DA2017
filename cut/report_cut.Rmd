@@ -1,0 +1,231 @@
+---
+title: "カットについての調査"
+author: "Yutaka Kuroki"
+date: "2017年10月25日"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    self_contained: true
+    thumbnails: false
+    lightbox: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+                 cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(modeest)
+library(knitr)
+library(magrittr)
+```
+
+```{r data_laptop, include=FALSE}
+customer.tmp <- read_csv("D:/Git/DataAnalysis2017/data/customer.csv")
+store <- read_csv("D:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("D:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("D:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id")
+```
+
+```{r customer_repeater}
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+```
+
+# はじめに
+
+購買行動の中でも特にカットについて調査した。以下がその概要である
+
+- カット全種類の概観と購買のカウント
+- お直しカット or カット
+- カット間隔
+- スタイリストごとの最頻カット
+
+# カット全種類の概観とカウント
+
+## 全カット
+
+全カットは以下の通り。店舗による価格設定のせいか、同じランクのカットにも価格のばらつきがある。  
+全40商品  
+
+- エグゼクティブ : 8000, 7500, 7000
+- ディレクター : 7000, 6000
+- スタイリスト : 6000, 5000
+- 一般？ : 7500
+- カット : 5500, 5000
+- 眉カット : 500
+- 前髪カット : 1000, 0
+- 学割 : ゴチャゴチャ（例：大学生5000、幼稚園3000）
+
+
+```{r kind_of_cuts}
+cuts <- product %>% 
+  filter(category_1 == "カット") %>% 
+  left_join(line, by = "product_id") %>% 
+  group_by(product_id) %>% 
+  summarise(count = n()) %>% 
+  left_join(product, by = "product_id") %>% #glimpse()
+  select(product_id, product_name, non_tax, end_date, count)
+kable(cuts)
+```
+
+## 購買回数順(top10)
+
+```{r cuts_count_top10}
+cuts %>% 
+  arrange(desc(count)) %>% 
+  head(10) %>% 
+  kable()
+```
+
+# お直しカット or カット
+
+上を見る限り、2999円を閾値にすればうまく分離できる。
+
+## お直し
+
+```{r onaoshi}
+cuts %>% 
+  filter(non_tax < 3000) %>% 
+  arrange(desc(count)) %>% 
+  kable()
+```
+
+前髪カットは結構でてる
+
+## ちゃんとしたカット
+
+下の方の商品ID、何のために準備してるのかわからない。  
+整理する必要は今のところ感じられないけれど
+```{r}
+cuts %>% 
+  filter(non_tax > 2999) %>% 
+  arrange(desc(count)) %>% 
+  kable()
+```
+
+# カット間隔
+
+顧客がどのぐらいの頻度で髪の毛を切るのかを見る。  
+間隔が見たいので必然的に2回以上カットしてる顧客が対象となる。
+
+## 通常のカットについて
+
+```{r cut_span}
+cut_span <- cuts %>% 
+  filter(non_tax > 2999) %>% # 通常のカットのみ対象
+  left_join(line, by="product_id") %>% #receiptにはあらかじめ顧客ID、日付を付与
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            span = (max(dt) - min(dt)) / (count-1)) %>% 
+  filter(is.na(span) == FALSE)
+```
+
+また0がいるよ、、、
+
+```{r cut_span_plot}
+cut_span %>% 
+  ggplot(aes(span)) +
+  geom_histogram(binwidth = 20,
+                 fill="gray", colour="black")+
+  scale_x_continuous(breaks=seq(0,600,60))+
+  scale_y_continuous(breaks = seq(0,3000,500))+
+  labs(title="各顧客のカット利用平均間隔")+
+  theme_bw()
+summary(as.numeric(cut_span$span))
+```
+
+
+## お直しカットについて
+
+同様の作業を行った。  
+通常のカットのスパンの方が平均、中央値ともども大きい。  
+お直しは通常のカットとカットの間に行われることが多く、また行われないこともあるためと考えられる。  
+お直しの間隔を考えること自体あまり意味がないのかも
+
+```{r onaoshi_span}
+onaoshi_span <- cuts %>% 
+  filter(non_tax < 3000) %>% # お直しカットのみ対象
+  left_join(line, by="product_id") %>% #receiptにはあらかじめ顧客ID、日付を付与
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            span = (max(dt) - min(dt)) / (count-1)) %>% 
+  filter(is.na(span) == FALSE)
+```
+
+
+
+```{r onaoshi_span_plot}
+onaoshi_span %>%
+  ggplot(aes(span)) +
+  geom_histogram(binwidth = 20,
+                 fill="gray", colour="black")+ 
+  scale_x_continuous(breaks=seq(0,600,60))+
+  scale_y_continuous(breaks = seq(0,200,50))+
+  labs(title="各顧客のお直しカット利用平均間隔")+
+  theme_bw()
+onaoshi_span$span %>% 
+  as.numeric() %>% 
+  summary()
+```
+# スタッフごとの最頻カット
+
+スタッフが売っている最頻のカットを考える。  
+スタッフの階級が推定できるかも
+
+```{r mode_cut}
+staff_cut <- cuts %>% 
+  filter(non_tax > 2999) %>% 
+  left_join(line, by="product_id") %>% 
+  select(dt, regi_staff, product_id, product_name, customer_id) %>% 
+  group_by(regi_staff) %>% 
+  nest(product_name) %>% 
+  mutate(mode_cut = map(data,
+                        function(df) names(sort(table(df), decreasing=TRUE))[1])) %>% 
+  unnest(mode_cut, .drop=TRUE)
+```
+
+とりあえずカットの最頻値。推定としてはどうなんでしょう
+
+```{r}
+staff_cut 
+staff_cut$mode_cut %>%as.factor() %>%  summary() %>% kable()
+```
+
