@@ -37,7 +37,7 @@ library(knitr)
 library(magrittr)
 ```
 
-```{r data_laptop, include=FALSE}
+```{r data_laptop, include=FALSE, eval=FALSE}
 customer.tmp <- read_csv("D:/Git/DataAnalysis2017/data/customer.csv")
 store <- read_csv("D:/Git/DataAnalysis2017/data/store.csv")
 staff <- read_csv("D:/Git/DataAnalysis2017/data/staff.csv") %>% 
@@ -47,6 +47,21 @@ product <- read_csv("D:/Git/DataAnalysis2017/data/product.csv")
 receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS") %>% 
   as_tibble()
 line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id")
+```
+
+```{r data_lab, include=FALSE}
+customer.tmp <- read_csv("E:/Git/DataAnalysis2017/data/customer.csv")
+store <- read_csv("E:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("E:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+line <- read_csv("E:/Git/DataAnalysis2017/data/line.csv") %>% 
   mutate(product_id = as.character(product_id)) %>% 
   left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
             by="receipt_id")

@@ -22,8 +22,6 @@ knitr::opts_chunk$set(cache = TRUE)
 ```{r library, include=FALSE}
 library(tidyverse)
 library(lubridate)
-library(fastICA)
-library(modeest)
 library(knitr)
 library(prophet)
 library(plotly)
@@ -138,10 +136,30 @@ df <-receipt %>%
   mutate(fit = map(data, function(df)  prophet(df)))  %>% 
   mutate(future = map(fit, function(x) make_future_dataframe(x, periods=30) )) %>% 
   mutate(forecast = map2(fit, future, predict)) %>% 
-  mutate(plot = map2(fit, forecast, prophet_plot_components ))
+  mutate(components = map2(fit, forecast, prophet_plot_components))
+  
 ```
 
 ```{r}
-df %>% plot()
+df2 <- df %>% 
+  unnest(forecast) %>% 
+  mutate(ds = as.Date(ds))%>% 
+  left_join(receipt %>% 
+               group_by(dt,store_id) %>% 
+               summarise(sales=sum(in_tax)) %>%
+               rename(ds=dt, y=sales),
+             by=c("store_id", "ds")) 
+df2 %>% 
+  ggplot(aes(x=ds))+
+  geom_point(aes(y=y),size=0.1)+
+  geom_ribbon(aes(ymax=yhat_upper,
+                  ymin=yhat_lower),
+              alpha=0.3,
+              fill="blue")+
+  facet_wrap(~store_id, scales = "free")+
+  theme_bw() -> p
+
+p  
 ```
+
 

@@ -39,7 +39,7 @@ library(prophet)
 library(plotly)
 ```
 
-```{r data_laptop, include=FALSE}
+```{r data_laptop, include=FALSE, eval=FALSE}
 receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS") %>% 
   as_tibble()
 customer.tmp <- read_csv("D:/Git/DataAnalysis2017/data/customer.csv")
@@ -63,6 +63,40 @@ staff <- read_csv("D:/Git/DataAnalysis2017/data/staff.csv") %>%
 product <- read_csv("D:/Git/DataAnalysis2017/data/product.csv")
 #receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
 line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+
+```{r data_lab, include=FALSE}
+receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+customer.tmp <- read_csv("E:/Git/DataAnalysis2017/data/customer.csv")
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+store <- read_csv("E:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("E:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+line <- read_csv("E:/Git/DataAnalysis2017/data/line.csv") %>% 
   mutate(product_id = as.character(product_id)) %>% 
   left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
             by="receipt_id") %>% 
