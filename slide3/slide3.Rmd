@@ -27,7 +27,7 @@ library(prophet)
 library(plotly)
 ```
 
-```{r data_lab, include=FALSE}
+```{r data_lab, include=FALSE, eval=FALSE}
 receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS") %>% 
   as_tibble()
 customer.tmp <- read_csv("E:/Git/DataAnalysis2017/data/customer.csv")
@@ -60,6 +60,39 @@ line <- read_csv("E:/Git/DataAnalysis2017/data/line.csv") %>%
             by="product_id")
 ```
 
+
+```{r data_laptop, include=FALSE}
+receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+customer.tmp <- read_csv("D:/Git/DataAnalysis2017/data/customer.csv")
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+store <- read_csv("D:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("D:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("D:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
 
 # introduction
 
@@ -98,22 +131,24 @@ receipt %>%
 
 ## GAM
 
+- motivation : 売上のメカニズムが知りたい。
+- growth + yearly + weekly
 - 一般化加法モデルを適用してみた。  
 - 実装の簡略化のため、 facebook のパッケージ `prophet` を用いた
 
 ```{r prophet, include=FALSE}
-fit <- prophet(df = receipt %>% 
-                  group_by(dt) %>% 
-                  summarise(sales = sum(in_tax)) %>% 
-                  rename(ds=dt,
-                         y=sales))
+df <- receipt %>% 
+  group_by(dt) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  rename(ds=dt,
+         y=sales)
+fit <- prophet(df)
 future <- make_future_dataframe(fit, periods=30) 
 forecast <- predict(fit, future)
 ```
 
 ```{r prophet_plot}
-p <- plot(fit, forecast)
-ggplotly(p)
+plot(fit, forecast)
 ```
 
 ## 季節性
@@ -122,44 +157,158 @@ ggplotly(p)
 prophet_plot_components(fit, forecast)
 ```
 
+## 残差
+
+残差プロットは以下のようである
+```{r fit.resid}
+fit.resid <- (df$y - forecast$yhat[1:729]) 
+fit.resid %>% ts.plot()
+```
+
+決定係数は以下
+
+```{r prophet_rsq, include=TRUE}
+cor(df$y, forecast$yhat[1:729])^2
+```
+
+## 
+
+
+```{r acf}
+par(mfcol = c(1,2))
+acf(fit.resid)
+pacf(fit.resid)
+par(mfcol=c(1,1))
+# 帰無仮説：自己相関ない
+```
+
+## 残差に関する検定
+
+- Box test : 帰無仮説「系列に自己相関はない」
+- shapiro wilk test : 帰無仮説「系列は正規母集団からのサンプル」
+
+```{r tests}
+Box.test(fit.resid, type="Ljung-Box")
+shapiro.test(fit.resid)
+```
+
+
+## 祝日
+
+```{r holidays}
+holiday_off <- data_frame(
+  holiday = 'holiday_off',
+  ds = as.Date(c('2015-12-31', '2016-01-02', '2016-01-03',
+                 '2016-02-22', '2016-12-31', '2017-01-02',
+                 '2017-01-03', '2017-02-27')),
+  lower_window = 0,
+  upper_window = 1
+)
+
+holiday_on <- data_frame(
+  holiday = 'holiday_on',
+  ds = as.Date(c('2015-07-20', '2015-09-21', '2015-09-23',
+                 '2015-10-12', '2015-11-03', '2015-11-23',
+                 '2015-12-23', '2015-12-29', '2015-12-30',
+                 '2016-01-11', '2016-02-11',
+                 '2016-03-20', '2016-03-21', '2016-04-29',
+                 '2016-05-03', '2016-05-04', '2016-05-05',
+                 '2016-07-18', '2016-08-11', '2016-09-19', 
+                 '2016-09-22', '2016-10-10', '2016-11-03', 
+                 '2016-11-23', '2016-12-23', '2016-12-29',
+                 '2016-12-30', '2017-01-09', 
+                 '2017-02-11', '2017-03-20', '2017-04-29',
+                 '2017-05-03', '2017-05-04', '2017-05-05')),
+  lower_window = 0,
+  upper_window = 1
+)
+holidays <- bind_rows(holiday_off, holiday_on)
+rm(holiday_off, holiday_on)
+```
+
+```{r prophet_holiday}
+fit.holiday <- prophet(df = receipt %>% 
+                  group_by(dt) %>% 
+                  summarise(sales = sum(in_tax)) %>% 
+                  rename(ds=dt,
+                         y=sales),
+                  holidays = holidays)
+forecast.holiday <- predict(fit.holiday, future)
+```
+
+```{r plot_holiday}
+plot(fit.holiday, forecast.holiday)
+```
+
+
+# 季節性（祝日加味）
+
+```{r plot_holiday_component}
+prophet_plot_components(fit.holiday, forecast.holiday)
+```
+
+## 残差（祝日加味）
+
+```{r}
+fit.holiday.resid <- (df$y - forecast.holiday$yhat[1:729]) 
+fit.holiday.resid %>% ts.plot()
+```
+
+```{r holiday_acf}
+par(mfcol=c(1,2))
+acf(fit.holiday.resid)
+pacf(fit.holiday.resid)
+par(mfcol=c(1,1))
+```
+
+```{r holiday_rsq}
+cor(df$y, forecast.holiday$yhat[1:729])^2
+```
+
+
+```{r holiday.tests}
+Box.test(fit.holiday.resid, type="Ljung-Box")
+shapiro.test(fit.holiday.resid)
+```
+
+```{r}
+df %>% 
+  mutate(yhat = forecast.holiday$yhat[1:729],
+         resid = y - yhat)  -> df
+```
 
 # 店舗ごと
 
-```{r}
-df <-receipt %>% 
+
+
+map2を用いてチェインの中でプロットを保存するのは難しかった
+```{r df.store, eval=FALSE}
+df.store <-receipt %>% 
   group_by(dt, store_id) %>% 
   summarise(sales = sum(in_tax)) %>% 
   rename(ds = dt,
          y = sales) %>% 
   group_by(store_id) %>% 
-  nest() %>% 
-  mutate(fit = map(data, function(df)  prophet(df)))  %>% 
+  nest() 
+```
+
+```{r prophet_df.store,eval=FALSE}
+df.store <- df.store %>% 
+  mutate(fit = map(data, function(df)  prophet(df, holidays=holidays)))  %>% 
   mutate(future = map(fit, function(x) make_future_dataframe(x, periods=30) )) %>% 
   mutate(forecast = map2(fit, future, predict)) %>% 
-  mutate(components = map2(fit, forecast, prophet_plot_components))
-  
+  mutate(components = map2(fit, forecast, prophet_plot_components)) %>% 
+  mutate(plot = map2(fit, forecast, plot))
+
+df.store <- df.store %>% 
+  left_join(store %>% select(store_id, store_name),
+            by = "store_id")
+
+df.store %>% 
+  mutate(filename = map_chr(store_name, ~paste0("fig/prophet/",.x, ".pdf")))  ->df
+df.store %>% 
+  mutate(rsquared = map2_dbl(data, forecast, ~cor(.x$y, .y$yhat[1:nrow(.x)])^2)) %>% 
+  select(store_name, rsquared) %>% arrange(rsquared)
+
+map2(df$filename, df$plot, ggsave)
 ```
-
-```{r}
-df2 <- df %>% 
-  unnest(forecast) %>% 
-  mutate(ds = as.Date(ds))%>% 
-  left_join(receipt %>% 
-               group_by(dt,store_id) %>% 
-               summarise(sales=sum(in_tax)) %>%
-               rename(ds=dt, y=sales),
-             by=c("store_id", "ds")) 
-df2 %>% 
-  ggplot(aes(x=ds))+
-  geom_point(aes(y=y),size=0.1)+
-  geom_ribbon(aes(ymax=yhat_upper,
-                  ymin=yhat_lower),
-              alpha=0.3,
-              fill="blue")+
-  facet_wrap(~store_id, scales = "free")+
-  theme_bw() -> p
-
-p  
-```
-
-

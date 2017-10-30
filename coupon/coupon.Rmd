@@ -1,0 +1,229 @@
+---
+title: "coupon"
+author: "Yutaka Kuroki"
+date: "2017年10月29日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(plotly)
+```
+
+```{r data_lab, include=FALSE, eval=FALSE}
+receipt <- readRDS("E:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+customer.tmp <- read_csv("E:/Git/DataAnalysis2017/data/customer.csv")
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+store <- read_csv("E:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("E:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+line <- read_csv("E:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+
+```{r data_laptop, include=FALSE}
+receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS") %>% 
+  as_tibble()
+customer.tmp <- read_csv("D:/Git/DataAnalysis2017/data/customer.csv")
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+store <- read_csv("D:/Git/DataAnalysis2017/data/store.csv")
+staff <- read_csv("D:/Git/DataAnalysis2017/data/staff.csv") %>% 
+  rename(store_id = store_id_num)
+product <- read_csv("D:/Git/DataAnalysis2017/data/product.csv")
+#receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt.csv")
+line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+# はじめに
+
+## motivation
+
+- そろそろクーポンについて見ていきたい。
+- あわよくばリピーターと非リピーターの違いがあれば嬉しい
+
+## 全クーポンの概観
+
+クーポンの大まかな区分けは以下のようである。
+
+```{r coupon_category2}
+product %>% 
+  select(category_1, category_2, product_name, non_tax) %>% 
+  filter(category_1 == "クーポン") %>% 
+  group_by(category_1, category_2) %>% 
+  summarise(商品数 = n()) %>% 
+  kable()
+```
+
+ホットペッパーの発行するクーポンが多すぎて気が遠くなる
+
+全クーポンの詳細は以下である。と思ったけど多すぎるのでhead(30)
+
+- 価格はクーポン適用後の値段っぽい。
+- つまり、新規顧客は通常の商品ではなくこちらを利用している可能性が高い。
+- クーポンの詳細を見るのは果てしないし、商品名から情報が得にくい
+- せめてcategory_2ごとにみるか、クーポン適用後の値段をざっくり分けるぐらいしか
+- 参考にホットペッパービューティーのサイト[https://beauty.hotpepper.jp/slnH000220768/coupon/]
+
+```{r all_coupons}
+product %>% 
+  select(category_1, category_2, product_name, in_tax, non_tax) %>% 
+  filter(category_1 == "クーポン") %>% 
+  arrange(category_2) %>% head(30) %>% 
+  kable()
+```
+
+# クーポンがどの程度使用されているか
+
+クーポンが期間内に何回使用されているか。
+
+- 楽天、リンクベル。。。
+- ホットペッパー。。。
+
+```{r category2_saleCount}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(category_1 == "クーポン") %>% 
+  group_by(category_2) %>% 
+  summarise(count = n()) %>% 
+  kable()
+```
+
+# 来店頻度順にみる
+
+会員情報無し系、クーポン全然使ってない。まじかよ。
+
+```{r unknownCustomer_coupon}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(is.na(comment) == FALSE, category_1 == "クーポン") 
+```
+
+```{r repeater_FALSE}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(repeater == FALSE, category_1 == "クーポン") %>% 
+  group_by(category_2) %>% 
+  summarise(count = n()) %>% 
+  mutate(rate = round(count/sum(count), 3)) %>% 
+  kable(caption = "非リピーターの使用クーポン")
+
+```
+
+
+```{r repeater_TRUE}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(repeater == TRUE, is.na(comment)==TRUE, category_1 == "クーポン") %>% 
+  group_by(category_2) %>% 
+  summarise(count = n()) %>% 
+  mutate(rate = round(count/sum(count), 3)) %>% 
+  kable(caption = "リピーターの使用クーポン")
+```
+
+```{r coupon_price_repeater}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(repeater == TRUE, is.na(comment)==TRUE, category_1 == "クーポン") %>% 
+  ggplot(aes(x=in_tax)) + 
+  geom_density(fill="red", alpha=0.4) +
+  labs(title="リピーターの使用するクーポン",
+       x = "price") +
+  theme_bw()
+```
+
+
+```{r coupon_price_nonrepeater}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(repeater == FALSE, category_1 == "クーポン") %>% 
+  ggplot(aes(x=in_tax)) + 
+  geom_density(fill="blue", alpha=0.4) +
+  labs(title="非リピーターの使用するクーポン",
+       x = "price") +
+  theme_bw()
+```
+
+重ね合わせ
+
+```{r coupon_price_density}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(is.na(customer_id) == FALSE, category_1 == "クーポン") %>% 
+  ggplot(aes(x=in_tax, fill=repeater))+
+  geom_density(alpha=0.5)+
+  labs(x="price")+
+  theme_bw()
+```
+
+# おまけ
+
+期間内にリピーターになった人。6360人
+
+```{r}
+receipt %>% 
+  filter(cs_point == 1) %>% 
+  select(customer_id) %>% 
+  left_join(customer, by = "customer_id") %>% 
+  filter(repeater == TRUE, is.na(comment) == TRUE, first_year > 2014) %>% summary()
+```
+
