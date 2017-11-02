@@ -150,7 +150,9 @@ line %>%
 line %>% 
   left_join(product %>% select(product_id, category_1, category_2),
             by= "product_id") %>% 
-  filter(is.na(comment) == FALSE, category_1 == "クーポン") 
+  filter(is.na(comment) == FALSE, category_1 == "クーポン") %>% 
+  select(dt, product_name, comment) %>% 
+  kable()
 ```
 
 ```{r repeater_FALSE}

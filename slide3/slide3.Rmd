@@ -1,5 +1,5 @@
 ---
-title: "売上のメカニズム"
+title: "データ解析コンペ"
 author: "Yutaka Kuroki"
 date: "2017年10月26日"
 output:
@@ -66,16 +66,14 @@ receipt <- readRDS("D:/Git/DataAnalysis2017/receipt.RDS") %>%
   as_tibble()
 customer.tmp <- read_csv("D:/Git/DataAnalysis2017/data/customer.csv")
 customer <- receipt %>% 
-  select(customer_id,
-         cs_point) %>% 
+  select(customer_id, dt) %>% 
+  group_by(customer_id, dt) %>% 
+  summarise() %>% 
   group_by(customer_id) %>% 
-  summarise(count = n(),
-            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
-  filter(count==1,
-         cumComing==1) %>%
+  summarise(count = n()) %>% 
+  filter(count==1) %>%
   mutate(repeater = FALSE) %>% 
-  select(customer_id,
-         repeater) %>% 
+  select(customer_id, repeater) %>% 
   right_join(customer.tmp, by="customer_id") %>% 
   mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
 rm(customer.tmp)
@@ -98,9 +96,8 @@ line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>%
 
 ## toc
 
-1. 前回までの流れ
-2. 残差についてみる
-3. 店舗ごとに見る
+1. 売り上げのメカニズム
+2. クーポンについて
 
 ## 現状
 
@@ -108,12 +105,12 @@ line <- read_csv("D:/Git/DataAnalysis2017/data/line.csv") %>%
 - それ以上のアプローチが分からない
 - 球面クラスタリングがかなり気になっている
 
-# 前回までの流れ
+# 売上のメカニズムについて
 
-## 概要
+## 前回までの流れ
 
 - おまけで一般化加法モデルを試した
-- 季節性を加えた
+- trend + yearly + weekly 
 - 見た目上はうまく行ってそうだった
 
 ## 日次総売上
@@ -132,8 +129,6 @@ receipt %>%
 ## GAM
 
 - motivation : 売上のメカニズムが知りたい。
-- growth + yearly + weekly
-- 一般化加法モデルを適用してみた。  
 - 実装の簡略化のため、 facebook のパッケージ `prophet` を用いた
 
 ```{r prophet, include=FALSE}
@@ -171,7 +166,7 @@ fit.resid %>% ts.plot()
 cor(df$y, forecast$yhat[1:729])^2
 ```
 
-## 
+## 自己相関
 
 
 ```{r acf}
@@ -193,7 +188,14 @@ shapiro.test(fit.resid)
 ```
 
 
-## 祝日
+# 祝日を加味する
+
+## 2 種類の祝日
+
+以下の祝日をダミー変数で用意
+
+- 美容院が休業するタイプの祝日（お正月等）
+- 美容院が営業するタイプの祝日（勤労感謝の日等）
 
 ```{r holidays}
 holiday_off <- data_frame(
@@ -226,7 +228,7 @@ holidays <- bind_rows(holiday_off, holiday_on)
 rm(holiday_off, holiday_on)
 ```
 
-```{r prophet_holiday}
+```{r prophet_holiday, include=FALSE}
 fit.holiday <- prophet(df = receipt %>% 
                   group_by(dt) %>% 
                   summarise(sales = sum(in_tax)) %>% 
@@ -241,7 +243,7 @@ plot(fit.holiday, forecast.holiday)
 ```
 
 
-# 季節性（祝日加味）
+## 季節性（祝日加味）
 
 ```{r plot_holiday_component}
 prophet_plot_components(fit.holiday, forecast.holiday)
@@ -254,6 +256,14 @@ fit.holiday.resid <- (df$y - forecast.holiday$yhat[1:729])
 fit.holiday.resid %>% ts.plot()
 ```
 
+決定係数は以下
+
+```{r holiday_rsq}
+cor(df$y, forecast.holiday$yhat[1:729])^2
+```
+
+## 自己相関（祝日加味）
+
 ```{r holiday_acf}
 par(mfcol=c(1,2))
 acf(fit.holiday.resid)
@@ -261,12 +271,10 @@ pacf(fit.holiday.resid)
 par(mfcol=c(1,1))
 ```
 
-```{r holiday_rsq}
-cor(df$y, forecast.holiday$yhat[1:729])^2
-```
 
+## 残差の検定
 
-```{r holiday.tests}
+```{r holiday.tests, include=TRUE}
 Box.test(fit.holiday.resid, type="Ljung-Box")
 shapiro.test(fit.holiday.resid)
 ```
@@ -277,38 +285,122 @@ df %>%
          resid = y - yhat)  -> df
 ```
 
-# 店舗ごと
+## 課題
 
+- お盆など、長期的な休みを取り入れる
+- 店舗により休業するタイプの祝日がまちまち
+- 大きい売上を捉えきれてない
+- データ解析コンペに結びつかない
 
+# クーポンについて
 
-map2を用いてチェインの中でプロットを保存するのは難しかった
-```{r df.store, eval=FALSE}
-df.store <-receipt %>% 
-  group_by(dt, store_id) %>% 
-  summarise(sales = sum(in_tax)) %>% 
-  rename(ds = dt,
-         y = sales) %>% 
-  group_by(store_id) %>% 
-  nest() 
+## 全クーポンの概観
+
+クーポンの大まかな区分けは以下のようである。
+
+```{r coupon_category2}
+product %>% 
+  select(category_1, category_2, product_name, non_tax) %>% 
+  filter(category_1 == "クーポン") %>% 
+  group_by(category_1, category_2) %>% 
+  summarise(商品数 = n()) %>% 
+  kable()
 ```
 
-```{r prophet_df.store,eval=FALSE}
-df.store <- df.store %>% 
-  mutate(fit = map(data, function(df)  prophet(df, holidays=holidays)))  %>% 
-  mutate(future = map(fit, function(x) make_future_dataframe(x, periods=30) )) %>% 
-  mutate(forecast = map2(fit, future, predict)) %>% 
-  mutate(components = map2(fit, forecast, prophet_plot_components)) %>% 
-  mutate(plot = map2(fit, forecast, plot))
+- ホットペッパー・・・
 
-df.store <- df.store %>% 
-  left_join(store %>% select(store_id, store_name),
-            by = "store_id")
+## クーポンの詳細
 
-df.store %>% 
-  mutate(filename = map_chr(store_name, ~paste0("fig/prophet/",.x, ".pdf")))  ->df
-df.store %>% 
-  mutate(rsquared = map2_dbl(data, forecast, ~cor(.x$y, .y$yhat[1:nrow(.x)])^2)) %>% 
-  select(store_name, rsquared) %>% arrange(rsquared)
+- 多すぎるので `head(n=30)`
 
-map2(df$filename, df$plot, ggsave)
+```{r all_coupons}
+product %>% 
+  select(category_1, category_2, product_name, in_tax, non_tax) %>% 
+  filter(category_1 == "クーポン") %>% 
+  arrange(category_2) %>% head(10) %>% 
+  kable()
 ```
+
+## 難点
+
+- 価格はクーポン適用後の値段のよう
+- 新規顧客は通常の商品ではなくこちらを利用している可能性が高い
+- クーポンの詳細を見るのは果てしないし、商品名から情報が得にくい
+- せめて category_2 ごとにみるか、クーポン適用後の値段をざっくり分けるぐらいしか
+- 参考にホットペッパービューティーのサイト[https://beauty.hotpepper.jp/slnH000220768/coupon/]
+- 新規客限定のクーポンが多い
+
+## クーポンがどの程度使用されているか
+
+クーポンが期間内に何回使用されているか。
+
+```{r category2_saleCount}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(category_1 == "クーポン") %>% 
+  group_by(category_2) %>% 
+  summarise(count = n()) %>% 
+  kable()
+```
+
+## 会員情報無し系
+
+全然使ってなかった
+
+```{r unknownCustomer_coupon}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(is.na(comment) == FALSE, category_1 == "クーポン") %>% 
+  select(dt, category_2, product_name, comment) %>% 
+  kable()
+```
+
+## 非リピーター
+
+```{r repeater_FALSE}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(repeater == FALSE, category_1 == "クーポン") %>% 
+  group_by(category_2) %>% 
+  summarise(count = n()) %>% 
+  mutate(rate = round(count/sum(count), 3)) %>% 
+  kable(caption = "非リピーターの使用クーポン")
+
+```
+
+## リピーター
+
+```{r repeater_TRUE}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(repeater == TRUE, is.na(comment)==TRUE, category_1 == "クーポン") %>% 
+  group_by(category_2) %>% 
+  summarise(count = n()) %>% 
+  mutate(rate = round(count/sum(count), 3)) %>% 
+  kable(caption = "リピーターの使用クーポン")
+```
+
+## クーポン適用後の価格
+
+リピーターと非リピーターのものを重ね合わせた
+
+```{r coupon_price_density}
+line %>% 
+  left_join(product %>% select(product_id, category_1, category_2),
+            by= "product_id") %>% 
+  filter(is.na(customer_id) == FALSE, category_1 == "クーポン") %>% 
+  ggplot(aes(x=in_tax, fill=repeater))+
+  geom_density(alpha=0.6)+
+  labs(x="price")+
+  theme_bw()
+```
+
+
+## まとめ
+
+- 初回荒らしが一定数いることが分かった
+- 分析の目的が見つけられない
