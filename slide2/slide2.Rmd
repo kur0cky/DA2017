@@ -44,30 +44,41 @@ library(knitr)
 
 
 
-
-```{r data_laptop, eval=FALSE}
-customer <- read.csv("D:/Git/DataAnalysis2017/data/customer.csv",
-                     fileEncoding = "utf-8")
-store <- read.csv("D:/Git/DataAnalysis2017/data/store.csv",
-                  fileEncoding = "utf-8")
-staff <- read.csv("D:/Git/DataAnalysis2017/data/staff.csv",
-                  fileEncoding = "utf-8") %>% 
-  rename(store_id = store_id_num)
-product <- read.csv("D:/Git/DataAnalysis2017/data/product.csv",
-                  fileEncoding = "utf-8",
-                  stringsAsFactors = FALSE)
-```
-
 ```{r data_lab, include=FALSE}
-customer <- read_csv("E:/Git/DataAnalysis2017/data/customer.csv")
-store <- read_csv("E:/Git/DataAnalysis2017/data/store.csv")
-staff <- read_csv("E:/Git/DataAnalysis2017/data/staff.csv") %>% 
-  rename(store_id = store_id_num)
-product <- read_csv("E:/Git/DataAnalysis2017/data/product.csv")
-line <- read_csv("E:/Git/DataAnalysis2017/data/line.csv")
-receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt.csv")
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
 
-# readrのすばらしさ
+customer.tmp <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
+
+customer <- receipt %>% 
+  select(customer_id,
+         cs_point) %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            cumComing=max(cs_point)) %>%  #cs_pointは累積来店回数
+  filter(count==1,
+         cumComing==1) %>%
+  mutate(repeater = FALSE) %>% 
+  select(customer_id,
+         repeater) %>% 
+  right_join(customer.tmp, by="customer_id") %>% 
+  mutate(repeater= ifelse(is.na(repeater)==TRUE,TRUE,FALSE))
+rm(customer.tmp)
+
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff_1.csv") %>% 
+  rename(store_id = store_id_num)
+
+product <- read_csv("E:/Git/DataAnalysis2017/data/product_2.csv")
+
+line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
 ```
 
 
