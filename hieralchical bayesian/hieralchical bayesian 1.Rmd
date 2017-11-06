@@ -1,0 +1,134 @@
+---
+title: "hieralchical bayesian 1"
+author: "Yutaka Kuroki"
+date: "2017年11月8日"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    self_contained: true
+    thumbnails: false
+    lightbox: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+                 cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+```
+
+
+
+```{r data_lab, include=FALSE}
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
+
+customer <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
+
+
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff_1.csv") %>% 
+  rename(store_id = store_id_num)
+
+product <- read_csv("E:/Git/DataAnalysis2017/data/product_2.csv")
+
+line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, repeater, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+# はじめに
+
+階層ベイズを用いて顧客の購買構造をモデリングしていく
+
+## motivation
+
+- 何とかしてデータ解析コンペへのアプローチを目指したい
+- 顧客の行動原理を少しでも把握したい
+- リピーターと非リピーターの原理を解明したい（理想）
+- 「定額制」、「ハッピーアワー」、「新規出店」といったアプローチに学術性を持たせたい（理想）。
+
+## なぜ階層ベイズなのか
+
+- 自由でロバストなモデリング（GLMやGLMM）がしたい
+- 事後分布がわかる、というベイジアンのメリット
+
+# いろいろ考える
+
+## 対象
+
+階層ベイズによりモデリング出来そうな対象として、次のようなものがある（黒木の主観）。
+
+1. リピーターになる or ならない(Conversion Rate)　：　ベルヌーイ分布
+2. リピーターの来店頻度 指数分布　：　ガンマ分布
+3. 顧客の購買単価　対数正規分布　：　ガンマ分布
+4. 店販をどの程度買うか
+
+また、全てのモデルに絡んでくる顧客情報には以下のものがある
+
+```{r customer_glimpse}
+customer %>% 
+  head() %>% 
+  kable()
+```
+
+
+# リピーターになる or ならない
+
+リピーター、非リピーターを次のように定義する
+
+- リピーター：当該期間において2ヶ月以上来店している顧客
+- 非リピーター：それ以外
+
+つまり、たとえ複数回来店していても、特定の一ヶ月間（例えば2016年6月）にのみ来店しているような顧客は非リピーターに含まれる。  
+リピーターと非リピーターの人数は以下のよう
+
+```{r repeater}
+# customer_id == -1 って何だっけ
+customer <- receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(year = year(dt),
+           month = month(dt),
+           customer_id) %>% 
+  summarise() %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 1) %>% 
+  mutate(repeater = TRUE) %>% 
+  right_join(customer, by="customer_id") %>% 
+  mutate_all(funs(ifelse(is.na(.),FALSE,.))) 
+
+customer %>%   
+  select(repeater) %>% 
+  summary() %>% 
+  kable()
+
+```
+
+## 単純なモデルから
+
+
+
