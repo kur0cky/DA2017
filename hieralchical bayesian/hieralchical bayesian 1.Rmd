@@ -348,10 +348,10 @@ RepeaterSpan %>%
 ```{r lognormal_mcmc, include=FALSE, eval=FALSE}
 fit.lognormal <- stan(file = 'model/lognormal.stan', data = data.weibull, 
             iter = 1000, chains = 4,
-            open_progress = TRUE)
+            open_progress = FALSE)
 
 fit.lognormal
-traceplot(fit.lognormal)
+stan_trace(fit.lognormal)
 # 収束性問題なさそう
 ms.lognormal <- extract(fit.lognormal)
 saveRDS(fit.lognormal, "fit/span_lognormal.RDS")
@@ -360,9 +360,10 @@ saveRDS(fit.lognormal, "fit/span_lognormal.RDS")
 ```{r newRepeaterSpan_lognormal}
 fit.lognormal <- readRDS("fit/span_lognormal.fit")
 ms.lognormal <- extract(fit.lognormal)
+stan_ac(fit.lognormal)
 RepeaterSpan %>% 
   ggplot(aes(x=diff))+
-  geom_density(fill="blue", alpha=0.2, colour="blue")+
+  geom_density(adjust=1.5, fill="blue", alpha=0.2, colour="blue")+
   geom_line(aes(y = dlnorm(diff,
                            mean(ms.lognormal$mu),
                            mean(ms.lognormal$sigma))),
