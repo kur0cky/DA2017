@@ -34,6 +34,7 @@ library(tidyverse)
 library(lubridate)
 library(knitr)
 library(rstan)
+options(mc.cores = 4)
 ```
 
 
@@ -230,14 +231,13 @@ summary(model1)
 - ワイブル分布が近いことが予測される
 - ガンマ分布は解釈が難しい？
 
-## 新規リピーターの来店間隔
+## リピーターの来店間隔
 
-新規リピーターについてその来店間隔を見た。
+リピーターについてその来店間隔を見た。
 
-```{r newRepeaterSpan}
-newRepeaterSpan <- customer %>% 
-  filter(first_year > 2015,
-         comment == "FALSE",
+```{r RepeaterSpan}
+RepeaterSpan <- customer %>% 
+  filter(comment == "FALSE",
          repeater == TRUE) %>% 
   left_join(receipt, by = "customer_id") %>% 
   select(customer_id, dt) %>% 
@@ -247,9 +247,10 @@ newRepeaterSpan <- customer %>%
   nest(.key="date") %>% 
   mutate(diff = map(date, ~diff(unlist(.)))) %>% 
   select(customer_id, diff) %>% 
-  unnest()
+  unnest() %>% 
+  filter(diff!=0) # 1日に2回以上来店している顧客を除く
 
-newRepeaterSpan  %>% 
+RepeaterSpan  %>% 
   ggplot(aes(diff))+
   geom_density(fill="blue", alpha=0.2)+
   theme_bw()
@@ -282,9 +283,9 @@ newRepeaterSpan %>%
   theme_bw()
 ```
 
-```{r weibull_mcmc, include=FALSE}
-data.weibull <- list(x = as.numeric(newRepeaterSpan$mean),
-                     N = nrow(newRepeaterSpan))
+```{r weibull_mcmc, include=FALSE, eval=FALSE}
+data.weibull <- list(x = as.numeric(RepeaterSpan$diff),
+                     N = nrow(RepeaterSpan))
 
 fit.weibull <- stan(file = 'model/weibull.stan', data = data.weibull, 
             iter = 1000, chains = 4)
@@ -294,14 +295,19 @@ traceplot(fit.weibull)
 # 収束性問題なさそう
 ms.weibull <- extract(fit.weibull)
 ms.weibull %>% glimpse()
+
+saveRDS(fit.weibull, "fit/span_weibull.RDS")
 ```
 
 比較
 
-```{r newRepeaterSpan_weiubll, include=FALSE}
-newRepeaterSpan %>% 
+```{r RepeaterSpan_weiubll, include=FALSE}
+fit.weibull <- readRDS("fit/span_weibull.fit")
+stan_trace(fit.weibull)
+ms.weibull <- extract(fit.weibull)
+RepeaterSpan %>% 
   ggplot(aes(x=diff))+
-  geom_density(fill="blue", alpha=0.2, colour = "blue")+
+  geom_density(adjust=1.5, fill="blue", alpha=0.2)+
   geom_line(aes(y = dweibull(diff,
                              mean(ms.weibull$m),
                              mean(ms.weibull$eta))),
@@ -311,7 +317,7 @@ newRepeaterSpan %>%
 ```
 
 
-```{r gamma_mcmc, include=FALSE}
+```{r gamma_mcmc, include=FALSE, eval=FALSE}
 fit.gamma <- stan(file = 'model/gamma.stan', data = data.weibull, 
             iter = 1000, chains = 4)
 
@@ -319,12 +325,17 @@ fit.gamma
 traceplot(fit.gamma)
 # 収束性問題なさそう
 ms.gamma <- extract(fit.gamma)
+
+saveRDS(fit.gamma, "fit/span_gamma.RDS")
 ```
 
-```{r newRepeaterSpan_gamma}
-newRepeaterSpan %>% 
+```{r RepeaterSpan_gamma}
+fit.gamma <- readRDS("fit/span_gamma.fit")
+stan_ac(fit.gamma)
+ms.gamma <- extract(fit.gamma)
+RepeaterSpan %>% 
   ggplot(aes(x=diff))+
-  geom_density(fill="blue", alpha=0.2, colour="blue")+
+  geom_density(adjust=1.5, fill="blue", alpha=0.2, colour="blue")+
   geom_line(aes(y = dgamma(diff,
                            mean(ms.gamma$alpha),
                            mean(ms.gamma$lambda))),
@@ -334,21 +345,22 @@ newRepeaterSpan %>%
 ```
 
 
-```{r lognormal_mcmc, include=FALSE}
-data.lognormal <- list(x = as.numeric(newRepeaterSpan$mean),
-                     N = nrow(newRepeaterSpan))
-
-fit.lognormal <- stan(file = 'model/lognormal.stan', data = data.lognormal, 
-            iter = 1000, chains = 4)
+```{r lognormal_mcmc, include=FALSE, eval=FALSE}
+fit.lognormal <- stan(file = 'model/lognormal.stan', data = data.weibull, 
+            iter = 1000, chains = 4,
+            open_progress = TRUE)
 
 fit.lognormal
 traceplot(fit.lognormal)
 # 収束性問題なさそう
 ms.lognormal <- extract(fit.lognormal)
+saveRDS(fit.lognormal, "fit/span_lognormal.RDS")
 ```
 
 ```{r newRepeaterSpan_lognormal}
-newRepeaterSpan %>% 
+fit.lognormal <- readRDS("fit/span_lognormal.fit")
+ms.lognormal <- extract(fit.lognormal)
+RepeaterSpan %>% 
   ggplot(aes(x=diff))+
   geom_density(fill="blue", alpha=0.2, colour="blue")+
   geom_line(aes(y = dlnorm(diff,
