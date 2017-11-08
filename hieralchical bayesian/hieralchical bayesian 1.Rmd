@@ -33,6 +33,7 @@ opts_knit$set(width=75)
 library(tidyverse)
 library(lubridate)
 library(knitr)
+library(rstan)
 ```
 
 
@@ -186,7 +187,7 @@ customer %>%
 ```
 
 
-## 単純なモデルから
+## ロジスティク回帰
 
 二項確率を与える最も簡単なモデルとしてロジスティック回帰を考える。ここでは説明変数として
 
@@ -201,29 +202,63 @@ data <- customer %>%
   filter(first_year > 2015,
          comment == "FALSE") %>% 
   select(customer_id, repeater, first_store, sex, birth_age) %>% 
-  mutate(old = 2015 - birth_age) %>%  #年齢の推定値を出したい
-  mutate(old = if_else(old==2015, as.double(NA), old)) %>% # birth_age:0をNAに
+  mutate(birth_age = as.factor(replace(birth_age, birth_age == 0, NA)), 
+         # 誕生年代はファクターに
+         repeater = as.integer(repeater)) %>% # 1:リピーター, 0:非リピーター
   left_join(store %>% select(store_id, store_name),
             by=c("first_store" = "store_id")) %>% 
-  select(-first_store, -birth_age) %>% 
+  select(-first_store) %>% 
+  mutate(sex = replace(sex, sex=="不明", NA)) %>% # 年齢不明をNAに
   arrange(customer_id)
 ```
 
 ```{r glm_logistic}
-logistic.fit <- glm(repeater ~ . - customer_id, 
+model1 <- glm(repeater ~ . - customer_id, 
     family = binomial,
     data=data) %>% step()
-summary(logistic.fit)
+summary(model1)
 ```
 
-```{r}
-pred <- predict(logistic.fit, type = "response")
-data %>% 
-  na.omit() %>% 
-  arrange(customer_id) %>% 
-  mutate(pred=as.logical(round(pred))) %>% mutate(a=as.factor(abs(repeater - pred))) %>% 
-  summary()
+誕生年代は離散化しなきゃね
 
-anova(logistic.fit, test="Chi")
+
+## 階層ベイズ
+
+都市型店舗（新宿店や池袋店）やハイブランド店舗（銀座店や青山店）で男女の性質が異なる可能性
+
+- 階層にする意味ある？
+
+
+
+
+# 来店間隔が指数分布に従う？
+
+- 単調減少する効用関数を満たすと考えるとき、むしろワイブル分布が適切なのでは
+- ガンマ分布は解釈が難しい？
+
+```{r newRepeaterSpan}
+newRepeaterSpan <- customer %>% 
+  filter(first_year > 2015,
+         comment == "FALSE",
+         repeater == TRUE) %>% 
+  left_join(receipt, by = "customer_id") %>% 
+  group_by(customer_id,dt) %>%
+  summarise() %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n(),
+            mean =  (max(dt)-min(dt)) / (n()-1) ) #%>% 
+newRepeaterSpan %>% 
+  ggplot(aes(x=as.numeric(mean)))+
+  geom_density(fill="blue", alpha=0.4)+
+  labs(title="新規リピータの平均来店間隔", x="day")+
+  theme_bw()
 ```
 
+```{r weibull_mcmc}
+data.weibull <- list(x = as.numeric(newRepeaterSpan$mean),
+                     N = nrow(newRepeaterSpan))
+
+fit <- stan(file = 'model/weibull.stan', data = data.weibull, 
+            iter = 1000, chains = 4)
+```
+指数分布のパラメータ$\mu$の最尤推定値
