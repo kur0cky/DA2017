@@ -38,7 +38,7 @@ library(rstan)
 
 
 
-```{r data_lab, include=FALSE, eval=FALSE}
+```{r data_lab, include=FALSE, eval=TRUE}
 receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
 
 customer <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
@@ -55,7 +55,7 @@ line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>%
   mutate(product_id = as.character(product_id)) %>% 
   left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
             by="receipt_id") %>% 
-  left_join(customer %>% select(customer_id, repeater, comment),
+  left_join(customer %>% select(customer_id, comment),
             by="customer_id") %>% 
   left_join(product %>% select(product_id, product_name),
             by="product_id")
@@ -63,7 +63,7 @@ line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>%
 
 
 
-```{r data_laptop, include=FALSE, eval=TRUE}
+```{r data_laptop, include=FALSE, eval=FALSE}
 receipt <- read_csv("D:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
 
 customer <- read_csv("D:/Git/DataAnalysis2017/data/customer_2.csv")
@@ -88,7 +88,7 @@ line <- read_csv("D:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>%
 
 # はじめに
 
-階層ベイズを用いて顧客の購買構造をモデリングしていく
+階層ベイズを用いて顧客の購買行動の構造をモデリングしていく
 
 ## motivation
 
@@ -96,39 +96,29 @@ line <- read_csv("D:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>%
 - 顧客の行動原理を少しでも把握したい
 - リピーターと非リピーターの原理を解明したい（理想）
 - 「定額制」、「ハッピーアワー」、「新規出店」といったアプローチに学術性を持たせたい（理想）。
+- シミュレーションを見据える
 
 ## なぜ階層ベイズなのか
 
-- 自由でロバストなモデリング（GLMやGLMM）がしたい
-- 事後分布がわかる、というベイジアンのメリット
-
-# いろいろ考える
+- 自由でロバストなモデリング（GLMやGLMMなど）がしたい
+- 事後分布がわかる、というメリット
 
 ## 対象
 
 階層ベイズによりモデリング出来そうな対象として、次のようなものがある（黒木の主観）。
 
 1. リピーターになる or ならない(Conversion Rate) : ベルヌーイ分布
-2. リピーターの来店頻度 : 指数分布, ガンマ分布
+2. リピーターの来店頻度 : ワイブル分布, 指数分布, ガンマ分布, 対数正規分布
 3. 顧客の購買単価 : 対数正規分布, ガンマ分布
 4. 店販をどの程度買うか
-
-また、全てのモデルに絡んでくる顧客情報には以下のものがある
-
-```{r customer_glimpse}
-customer %>% 
-  head() %>% 
-  kable()
-```
-
 
 # リピーターになる or ならない
 
 ## リピーターの定義
 
-リピーター、非リピーターを次のように定義する
+リピーター、非リピーターは次のように定義した
 
-- リピーター：当該期間において2ヶ月以上来店している顧客
+- リピーター：当該期間において2ヶ月以上に渡り来店している顧客
 - 非リピーター：それ以外
 
 つまり、たとえ複数回来店していても、特定の一ヶ月間（例えば2016年6月）にのみ来店しているような顧客は非リピーターに含まれる。  
@@ -161,7 +151,7 @@ customer %>%
 
 目標は「新規顧客がリピーターになるかならないか問題をモデリングすること」である。
 
-上記のリピーター or 非リピーターについて、新規顧客のみを見ていく。また、完全なデータのある2016年以降に初回来店した客についてのみ考える。
+そこで、上記のリピーター or 非リピーターについて、新規顧客のみを見ていく。また、完全なデータのある2016年以降に初回来店した客についてのみ考える。
 
 - 2016年1月1日以降に初回来店している
 - 最低でも2カ月以上に渡って来店していればリピーター
@@ -177,7 +167,7 @@ customer %>%
   kable()
 ```
 
-- 注意：「会員情報無し」系顧客を考慮していないので、選択バイアスが生じている。
+- **注意**：「会員情報無し」系顧客を考慮していないので、選択バイアスが生じている。
 
 
 また、リピーターになるかならないかはベルヌーイ分布$Bern(\mu)$に従うと考えられる。パラメータ$\mu$の最尤推定値は
@@ -215,11 +205,14 @@ data <- customer %>%
 ```{r glm_logistic}
 model1 <- glm(repeater ~ . - customer_id, 
     family = binomial,
-    data=data) %>% step()
+    data = data,
+    na.action = ) %>% 
+  step()
 summary(model1)
 ```
 
-誕生年代は離散化しなきゃね
+誕生年代は離散化しなきゃね。めんどいからやってない
+
 
 
 ## 階層ベイズ
@@ -229,14 +222,49 @@ summary(model1)
 - 階層にする意味ある？
 
 
+# 来店間隔の分布
 
+## motivation
 
-# 来店間隔が指数分布に従う？
-
-- 単調減少する効用関数を満たすと考えるとき、むしろワイブル分布が適切なのでは
+- 美容室が、単調減少する効用関数を満たすものと考えるとき、信頼性工学が応用できるのでは
+- ワイブル分布が近いことが予測される
 - ガンマ分布は解釈が難しい？
 
+## 新規リピーターの来店間隔
+
+新規リピーターについてその来店間隔を見た。
+
 ```{r newRepeaterSpan}
+newRepeaterSpan <- customer %>% 
+  filter(first_year > 2015,
+         comment == "FALSE",
+         repeater == TRUE) %>% 
+  left_join(receipt, by = "customer_id") %>% 
+  select(customer_id, dt) %>% 
+  mutate(dt = as.integer(dt)) %>% 
+  arrange(customer_id, dt) %>% 
+  group_by(customer_id) %>% 
+  nest(.key="date") %>% 
+  mutate(diff = map(date, ~diff(unlist(.)))) %>% 
+  select(customer_id, diff) %>% 
+  unnest()
+
+newRepeaterSpan  %>% 
+  ggplot(aes(diff))+
+  geom_density(fill="blue", alpha=0.2)+
+  theme_bw()
+```
+
+このサンプルが何の分布に従うのか、以下の分布について検討した
+
+- ワイブル分布
+- ガンマ分布
+- 対数正規分布
+
+推定した密度関数は以下のようである。なお、推定の収束性診断に関しては問題なかった
+
+```{r , eval=FALSE, include=FALSE}
+# 顧客ごとの平均間隔　の分布
 newRepeaterSpan <- customer %>% 
   filter(first_year > 2015,
          comment == "FALSE",
@@ -254,11 +282,81 @@ newRepeaterSpan %>%
   theme_bw()
 ```
 
-```{r weibull_mcmc}
+```{r weibull_mcmc, include=FALSE}
 data.weibull <- list(x = as.numeric(newRepeaterSpan$mean),
                      N = nrow(newRepeaterSpan))
 
-fit <- stan(file = 'model/weibull.stan', data = data.weibull, 
+fit.weibull <- stan(file = 'model/weibull.stan', data = data.weibull, 
             iter = 1000, chains = 4)
+
+fit.weibull
+traceplot(fit.weibull)
+# 収束性問題なさそう
+ms.weibull <- extract(fit.weibull)
+ms.weibull %>% glimpse()
 ```
-指数分布のパラメータ$\mu$の最尤推定値
+
+比較
+
+```{r newRepeaterSpan_weiubll, include=FALSE}
+newRepeaterSpan %>% 
+  ggplot(aes(x=diff))+
+  geom_density(fill="blue", alpha=0.2, colour = "blue")+
+  geom_line(aes(y = dweibull(diff,
+                             mean(ms.weibull$m),
+                             mean(ms.weibull$eta))),
+            size = 1)+
+  labs(title="新規リピータの平均来店間隔 vs weibull", x="day")+
+  theme_bw()
+```
+
+
+```{r gamma_mcmc, include=FALSE}
+fit.gamma <- stan(file = 'model/gamma.stan', data = data.weibull, 
+            iter = 1000, chains = 4)
+
+fit.gamma
+traceplot(fit.gamma)
+# 収束性問題なさそう
+ms.gamma <- extract(fit.gamma)
+```
+
+```{r newRepeaterSpan_gamma}
+newRepeaterSpan %>% 
+  ggplot(aes(x=diff))+
+  geom_density(fill="blue", alpha=0.2, colour="blue")+
+  geom_line(aes(y = dgamma(diff,
+                           mean(ms.gamma$alpha),
+                           mean(ms.gamma$lambda))),
+            size = 1)+
+  labs(title="新規リピータの平均来店間隔 vs gamma", x="day")+
+  theme_bw()
+```
+
+
+```{r lognormal_mcmc, include=FALSE}
+data.lognormal <- list(x = as.numeric(newRepeaterSpan$mean),
+                     N = nrow(newRepeaterSpan))
+
+fit.lognormal <- stan(file = 'model/lognormal.stan', data = data.lognormal, 
+            iter = 1000, chains = 4)
+
+fit.lognormal
+traceplot(fit.lognormal)
+# 収束性問題なさそう
+ms.lognormal <- extract(fit.lognormal)
+```
+
+```{r newRepeaterSpan_lognormal}
+newRepeaterSpan %>% 
+  ggplot(aes(x=diff))+
+  geom_density(fill="blue", alpha=0.2, colour="blue")+
+  geom_line(aes(y = dlnorm(diff,
+                           mean(ms.lognormal$mu),
+                           mean(ms.lognormal$sigma))),
+            size = 1)+
+  labs(title="新規リピータの平均来店間隔 vs lognormal", x="day")+
+  theme_bw()
+```
+
+ぴったり
