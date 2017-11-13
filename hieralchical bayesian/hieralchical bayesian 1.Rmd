@@ -35,6 +35,7 @@ library(lubridate)
 library(knitr)
 library(rstan)
 options(mc.cores = 4)
+rstan_options(auto_write = TRUE)
 ```
 
 
@@ -358,18 +359,98 @@ saveRDS(fit.lognormal, "fit/span_lognormal.RDS")
 ```
 
 ```{r newRepeaterSpan_lognormal}
-fit.lognormal <- readRDS("fit/span_lognormal.fit")
+fit.lognormal <- readRDS("fit/span_lognormal.RDS") 
 ms.lognormal <- extract(fit.lognormal)
 stan_ac(fit.lognormal)
-RepeaterSpan %>% 
+RepeaterSpan %>%  
   ggplot(aes(x=diff))+
-  geom_density(adjust=1.5, fill="blue", alpha=0.2, colour="blue")+
+  geom_density(adjust=1.2, fill="blue", alpha=0.2, colour="blue")+
   geom_line(aes(y = dlnorm(diff,
                            mean(ms.lognormal$mu),
                            mean(ms.lognormal$sigma))),
             size = 1)+
-  labs(title="新規リピータの平均来店間隔 vs lognormal", x="day")+
+  labs( x="day")+
   theme_bw()
 ```
 
 ぴったり
+
+
+
+男女ごと
+
+```{r}
+RepeaterSpan %>% 
+  right_join(customer ,
+             by = "customer_id") %>% 
+  filter(sex != "不明") %>% 
+  ggplot(aes(x=diff, group=sex))+
+  geom_density(fill = "blue", alpha = 0.3, adjust =1.5)+
+  #facet_wrap(~sex, scale="free")+
+  theme_bw()
+```
+
+かなり違う。これは階層にしよう
+
+店舗ごと
+```{r}
+RepeaterSpan %>% 
+  right_join(customer ,
+             by = "customer_id") %>% 
+  filter(sex != "不明") %>% 
+  ggplot(aes(x=diff, group=first_store))+
+  geom_density(fill = "blue", alpha = 0.1, adjust = )+
+  theme_bw()
+```
+
+誕生年代ごと
+
+```{r}
+RepeaterSpan %>% 
+  right_join(customer ,
+             by = "customer_id") %>%
+  mutate(birth_age = as.factor(birth_age)) %>% select(birth_age) %>% 
+  ggplot(aes(x=diff))+
+  geom_density(fill = "blue", alpha = 0.1, adjust = 1.2)+
+  facet_wrap(~birth_age)+
+  theme_bw()
+```
+
+```{r}
+RepeaterSpan <- RepeaterSpan %>% 
+  left_join(customer ,
+             by = "customer_id") %>% 
+  filter(sex != "不明") %>% 
+  mutate(sex = as.numeric(as.factor(sex))) %>% 
+  select(customer_id, diff ,sex)
+
+data <- list(N=nrow(RepeaterSpan),
+             x = RepeaterSpan$diff,
+             sex = RepeaterSpan$sex)
+```
+女性：0
+男性：1
+```{r}
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores()-1)
+fit.spen_sex <- stan(file = 'model/lognormal_1.stan', data = data, 
+            iter = 1000, chains = 4,
+            open_progress = FALSE)
+saveRDS(fit.spen_sex, "fit.spen_sex.RDS")
+sfit.spen_sex <- readRDS("fit_spen_sex.RDS")
+stan_trace(fit.spen_sex)
+vb1 <- stan_model(file="model/lognormal_2.stan")
+fit.vb <- vb(vb1, data=data, iter=1000,  seed=123)
+
+fit.lognormal
+stan_trace(fit.lognormal)
+# 収束性問題なさそう
+ms.lognormal <- extract(fit.lognormal)
+saveRDS(fit.lognormal, "fit/span_lognormal.RDS")
+```
+
+```{r}
+
+fit.mcmc1 <- sampling(vb1, data =data, seed=123)
+```
+
