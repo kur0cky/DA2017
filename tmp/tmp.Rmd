@@ -1,0 +1,310 @@
+---
+title: "hierarchical bayesian 1"
+author: "Yutaka Kuroki"
+date: "2017年11月10日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# ライブラリ
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(rstan)
+options(mc.cores = parallel::detectCores()-1)
+rstan_options(auto_write = TRUE)
+```
+
+# データの準備
+
+```{r data_lab, include=FALSE, eval=TRUE}
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
+
+customer <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
+
+
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff_1.csv") %>% 
+  rename(store_id = store_id_num)
+
+product <- read_csv("E:/Git/DataAnalysis2017/data/product_2.csv")
+
+line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+```{r repeater}
+# customerテーブルにrepeater列の追加
+# customer_id == -1 って何だっけ
+customer <- receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(year = year(dt),
+           month = month(dt),
+           customer_id) %>% 
+  summarise() %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 1) %>% 
+  mutate(repeater = TRUE) %>% 
+  right_join(customer, by="customer_id") %>% 
+  mutate_all(funs(ifelse(is.na(.),FALSE,.))) 
+
+```
+
+
+```{r RepeaterSpan}
+RepeaterSpan <- customer %>% 
+  filter(comment == "FALSE", # 会員情報なし以外
+         repeater == TRUE) %>% 
+  left_join(receipt, by = "customer_id") %>% 
+  select(customer_id, dt) %>% 
+  mutate(dt = as.integer(dt)) %>% 
+  arrange(customer_id, dt) %>% 
+  group_by(customer_id) %>% 
+  nest(.key="date") %>% 
+  mutate(diff = map(date, ~diff(unlist(.)))) %>% 
+  select(customer_id, diff) %>% 
+  unnest() %>% 
+  filter(diff!=0) %>% # 1日に2回以上来店している顧客を除く
+  left_join(customer, by = "customer_id") %>% 
+  select(customer_id, diff, sex, birth_age) %>% 
+  mutate(birth_age = cut(birth_age,
+                        breaks=c(1900,1940,1970,1990,2020),
+                        labels=c("","old","middle","young"),
+                        right=FALSE)) %>% 
+  filter(sex!="不明") %>% 
+  filter(birth_age!="",
+         is.na(birth_age)==FALSE) %>% 
+  mutate(male=as.numeric(as.factor(sex))-1,
+         middle = if_else(birth_age == "middle", 1, 0),
+         old = if_else(birth_age == "old", 1, 0)) %>% 
+  select(customer_id, diff, male, middle, old)
+```
+
+
+```{r}
+RepeaterSpan %>% 
+  filter(birth_age!="") %>% group_by(birth_age) %>% summarise(sd(diff))
+  ggplot(aes(x=diff, group=birth_age))+
+  geom_density(adjust=2) +
+  facet_wrap(~birth_age)
+```
+
+```{r}
+data <- list(N=nrow(RepeaterSpan),
+             x = RepeaterSpan$diff,
+             sex = as.numeric(as.factor(RepeaterSpan$sex)))
+
+
+model <- stan_model(file="model/lognormal_2.stan")
+fit <- sampling(model, data=data, iter=2000,  seed=123, chains=1)
+fit.vb <- vb(model, data=data, iter=1000, seed=123)
+
+stan_dens(fit.vb)
+```
+
+縦長に。ダミー変数なので
+
+```{r}
+
+options(mc.cores = parallel::detectCores()-1)
+options(mc.cores = 1)
+data <- list(N=nrow(RepeaterSpan),
+             x = RepeaterSpan$diff,
+             male = RepeaterSpan$male,
+             middle = RepeaterSpan$middle,
+             old = RepeaterSpan$old)
+
+
+model3 <- stan_model(file="model/lognormal_3.stan")
+fit3 <- sampling(model3, data=data, iter=1000,  seed=123, chains=4)
+fit3.vb <- vb(model3, data=data, iter=1000, seed=123)
+
+```
+
+```{r}
+RepeaterSpan %>% 
+  ggplot(aes(x=diff))+
+  geom_density(adjust=1.5, alpha=0.2)+
+  theme_bw()+
+  facet_wrap(~birth_age+sex)
+
+ms3 <- extract(fit3)
+saveRDS(fit3, "model/fit3.RDS")
+exp(rnorm(10000,mean=mean(ms3$mu)+mean(ms3$mu_male), sd=sqrt(mean(ms3$sigma)))) %>% density() %>% plot()
+```
+
+# 完成
+```{r}
+data <- list(x = RepeaterSpan$diff,
+             middle = RepeaterSpan$middle,
+             old = RepeaterSpan$old,
+             sex = RepeaterSpan$male,
+             N = nrow(RepeaterSpan),
+             nSex = 2,
+             nOld = 3)
+model4 <- stan_model(file="model/lognormal_4.stan")
+fit4 <- sampling(model4, data=data, iter=1000,  seed=123, chains=4)
+```
+
+
+# 時間の分布
+
+```{r}
+receipt %>% 
+  mutate(hour = hour(t),
+         wday = wday(dt)) %>% 
+  group_by(wday, hour) %>% 
+  summarise(count = n()) %>% 
+  ggplot(aes(x=hour, y=count)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~wday, scales="free")+
+  theme_bw()
+
+receipt %>% 
+  group_by(dt, customer_id, regi_staff) %>% 
+  summarise() %>% 
+  mutate()
+```
+
+
+
+```{r wday span}
+
+Span <- customer %>% 
+  filter(comment == "FALSE", # 会員情報なし以外
+         repeater == TRUE) %>% 
+  left_join(receipt, by = "customer_id") %>% 
+  select(customer_id, dt, in_tax) %>%
+  arrange(customer_id, dt) %>% 
+  group_by(customer_id) %>% 
+  nest() %>% 
+  mutate(before=data) %>% 
+  mutate(before = map(before, ~unlist(.))) %>% 
+  mutate(after = map(before, ~lead(.))) %>% 
+  mutate(diff = map2(after, before, ~.x-.y)) %>% 
+  mutate(wday_a = map(after, ~wday(as.Date(., origin="1970-01-01")))) %>% 
+  mutate(wday_b = map(before, ~wday(as.Date(., origin="1970-01-01")))) %>% 
+  select(-data) %>% 
+  unnest() %>% 
+  drop_na() %>% 
+  mutate(after = as.Date(after, origin = "1970-01-01")) %>% 
+  filter(diff!=0) %>% 
+  left_join(customer %>% select(customer_id, sex, birth_age),
+            by = "customer_id") %>% 
+  mutate(birth_age = cut(birth_age,
+                        breaks=c(1900,1940,1970,1990,2020),
+                        labels=c("","old","middle","young"),
+                        right=FALSE)) %>% 
+  filter(sex!="不明") %>% 
+  filter(birth_age!="",
+         is.na(birth_age)==FALSE) %>% 
+  mutate(male=as.numeric(as.factor(sex))-1,
+         middle = if_else(birth_age == "middle", 1, 0),
+         old = if_else(birth_age == "old", 1, 0))
+
+
+
+
+
+Span %>% mutate(wdiff=wday_a-wday_b) %>% .$wdiff %>% hist()  
+
+Span %>% left_join(customer %>% select(birth_age, customer_id, sex), by="customer_id") %>% 
+  mutate(birth_age = cut(birth_age,
+                         breaks=c(1900,1940,1970,1990,2020),
+                         labels=c("","old","middle","young"),
+                         right=FALSE)) %>% 
+  filter(sex!="不明") %>% 
+  filter(birth_age!="",
+         is.na(birth_age)==FALSE) %>% 
+  group_by(birth_age,wday) %>% 
+  summarise(n=n()) %>% 
+  ggplot(aes(x=wday,y=n))+
+  geom_bar(stat="identity") +
+  facet_wrap(~birth_age, scales="free")
+```
+
+# 単価
+
+```{r}
+receipt %>% 
+  select(customer_id, dt, in_tax) %>% 
+  left_join(customer %>% select(customer_id, sex, birth_age, comment),
+            by="customer_id") %>% 
+  filter(comment == "FALSE") %>% 
+  mutate(birth_age = cut(birth_age,
+                         breaks=c(1900,1940,1970,1990,2020),
+                         labels=c("","old","middle","young"),
+                         right=FALSE)) %>% 
+  filter(sex!="不明") %>% 
+  filter(birth_age!="") %>% 
+  arrange(customer_id, dt) %>% 
+  group_by(customer_id, dt, sex, birth_age) %>% 
+  summarise(in_tax = sum(in_tax)) %>% 
+  mutate(log_in_tax = log(in_tax)) #%>% 
+  ggplot(aes(x=in_tax))+
+  geom_density(adjust=1.5)+
+  #scale_x_continuous(limits=c(6,12))+
+  theme_bw()+
+  facet_grid(sex~birth_age)
+```
+
+```{r mcmc}
+data <- list(N=nrow(Span),
+             x = Span$diff,
+             wday_a = Span$wday_a,
+             wday_b = Span$wday_b,
+             middle = RepeaterSpan$middle,
+             old = RepeaterSpan$old,
+             sex = RepeaterSpan$male)
+```
+
+
+
+```{r}
+receipt %>% left_join(customer, by="customer_id") %>% 
+  group_by(repeater, dt) %>% 
+  summarise(count=n()) %>% 
+  mutate(wday=wday(dt)) %>% 
+  ggplot(aes(x=wday,y=count))+
+  geom_bar(stat="identity")+
+  facet_wrap(~repeater, scales="free")
+```
+
+
+```{r fit4}
+ms4 <- extract(fit4)
+ms4$status %>%  data.frame() %>% head()
+
+ms4 <- ms4$status %>%  
+  data.frame()
+colnames(ms4) <- c("女性 若年", "男性 若年", "女性 中年", "男性 中年", "女性 老年", "男性 老年")
+ms4 %>% 
+  gather() %>% 
+  
+  ggplot(aes(x=value,y=..density..))+
+  facet_wrap(~key)+
+  geom_histogram(alpha=0.6, colour="skyblue", binwidth = 20, fill="skyblue")+
+  geom_density(size=0.8, adjust=2)+
+  labs(x="来店間隔（日）", y="密度")+
+  theme_bw() +
+  theme(
+  panel.background = element_blank(),
+  panel.grid = element_blank()
+  )
+```
+

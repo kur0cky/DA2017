@@ -1,0 +1,123 @@
+---
+title: "retail data 1"
+author: "Yutaka Kuroki"
+date: "2017年11月15日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      cache = TRUE)
+```
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(arules)
+library(DT)
+#options(mc.cores = parallel::detectCores()-1)
+#rstan_options(auto_write = TRUE)
+```
+
+
+
+# データの準備
+
+```{r data_lab, include=FALSE, eval=TRUE}
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
+
+customer <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
+
+
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff_1.csv") 
+
+product <- read_csv("E:/Git/DataAnalysis2017/data/product_2.csv") 
+
+line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>% 
+  mutate(product_id = as.character(product_id))
+```
+
+# はじめに
+
+簡単なアソシエーション分析を行う
+
+## motivation
+
+- まだまだデータを眺める
+- イモをどのようにカットするか
+- どのように調査するか
+- 洗うのは、やるとすれば欠損の補間ぐらい
+
+## アソシエーション分析とは
+
+- ありそうなパターンを抽出する
+- アイテムXが含まれるときアイテムYも含まれるとき
+    - X : 条件
+    - Y : 結論
+- その相関ルールは X -> Y と書く
+
+## 用語
+
+### support（支持度）
+
+$X, XY, Y$両方のアイテム(の和集合)を含むトランザクションがデータ中に占める比率。  
+支持度が高いルールはデータ全体でみてよく起きやすい。  
+データ全体のトランザクション数を$M$アイテム$X$を含むトランザクション数を$\sigma(X)$とあらわすとき、支持度は、
+
+$supp(X\rightarrow Y) = \sigma(X\cup Y)/M = supp(Y\rightarrow X)$
+
+###confidenc（確信度）
+
+トランザクション中にアイテム$X$が含まれるとき、アイテム$Y$も同時に含まれる比率。確信度が高いルールでは、アイテム$X$を含むトランザクションにはアイテム$Y$も含まれやすい。
+
+$conf(X\rightarrow Y) = \sigma(X\cup Y)/\sigma(X) = supp(X\rightarrow Y)/supp(X)$
+
+###lift（リフト）
+
+ルールによって起こる$Y$の頻度 / 全体での$Y$の頻度。  
+リフトが1より大きい場合にルールが有効、ルールによってアイテムが含まれやすくなる、と解釈できる
+
+$lift(X\rightarrow Y) = conf(X\rightarrow Y)/supp(Y) = supp(X\rightarrow Y)/supp(X)\times supp(Y)$
+
+# 使用するデータの準備。
+
+商品数(1399)が多すぎるので、第2カテゴリ(90)を見る。
+
+縦軸レシートID, 横軸カテゴリ2の行列を作成
+
+```{r data_for_arules}
+data <- line %>% 
+  left_join(product, by="product_id") %>% 
+  select(receipt_id, category_2) %>% 
+  group_by(receipt_id, category_2) %>% 
+  summarise(n=n()) %>% 
+  spread(category_2, n, fill=0) %>% 
+  ungroup() %>% 
+  select(-receipt_id) %>% 
+  as.matrix()
+```
+
+## apriori
+
+```{r apriori, include=FALSE}
+rules <- apriori(data,
+        parameter=list(support=0.06, confidence=0.2))
+```
+
+```{r tules}
+inspect(sort(rules, by="lift")) %>% datatable()
+```
+
+## ブリリエルとは
+
+```{r brillier}
+product %>% 
+  filter(category_2 == "ブリリエル")
+```
+
+トリートメント、しかも技術

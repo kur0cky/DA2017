@@ -1,0 +1,127 @@
+---
+title: "LDA"
+author: "Yutaka Kuroki"
+date: "2017年11月13日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# ライブラリ
+
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(rstan)
+#options(mc.cores = parallel::detectCores()-1)
+#rstan_options(auto_write = TRUE)
+```
+
+
+# データの準備
+
+```{r data_lab, include=FALSE, eval=TRUE}
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
+
+customer <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
+
+
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff_1.csv") %>% 
+  rename(store_id = store_id_num)
+
+product <- read_csv("E:/Git/DataAnalysis2017/data/product_2.csv")
+
+line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+```{r repeater}
+# customerテーブルにrepeater列の追加
+# customer_id == -1 って何だっけ
+customer <- receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(year = year(dt),
+           month = month(dt),
+           customer_id) %>% 
+  summarise() %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 1) %>% 
+  mutate(repeater = TRUE) %>% 
+  right_join(customer, by="customer_id") %>% 
+  mutate_all(funs(ifelse(is.na(.),FALSE,.))) 
+
+```
+
+```{r mode_store}
+customer <- customer %>%
+  filter(is.na(comment) == "FALSE") %>%
+  filter(is.na(birth_age) == FALSE) %>%
+  filter(sex != "不明") %>%
+  filter(is.na(visit_interval) == FALSE) %>%
+  left_join(receipt, by="customer_id") %>%
+  group_by(customer_id, dt, store_id) %>%
+  summarise() %>%
+  ungroup() %>%
+  select(customer_id, store_id) %>%
+  group_by(customer_id) %>%
+  nest() %>%
+  mutate(mode_store = map(data, ~modeest::mfv(.$store_id))) %>%
+  select(-data) %>%
+  unnest() %>%
+  inner_join(customer,by="customer_id") 
+
+```
+
+
+# 使用するデータの準備
+
+```{r}
+data.tmp <- line %>% 
+  select(receipt_id, product_id) %>% 
+  left_join(product %>% select(product_id, category_id_2, category_2, category_1), 
+            by="product_id") %>% 
+  left_join(receipt %>% select(receipt_id, customer_id),
+            by = "receipt_id") %>% 
+  left_join(customer , by="customer_id") %>% 
+  select(customer_id, category_id_2) %>% 
+  arrange(customer_id) %>% 
+  filter(customer_id>0) %>% 
+  mutate_all(as.factor) %>% 
+  mutate_all(as.numeric) %>% 
+  na.omit()
+
+E <- nrow(data.tmp)%>% as.numeric()
+
+N <- data.tmp %>% group_by(customer_id) %>% summarise() %>% nrow() 
+I <- data.tmp %>% group_by(category_id_2) %>% summarise() %>% nrow()
+K <- 10.0
+
+data <- list(E = nrow(data.tmp),
+             N = N,
+             I = I,
+             K = 10,
+             PersonID = data.tmp$customer_id ,
+             ItemId = data.tmp$category_id_2,
+             Alpha = rep(0.5,I))
+```
+
+```{r runstan}
+LDAmodel <- stan_model(file='model/LDA.stan')
+fit_mcmc <- sampling(LDAmodel, data=data, seed=123)
+fit_vb <- vb(LDAmodel, data=data, seed=123)
+
+options(mc.cores = parallel::detectCores()-1)
+rstan_options(auto_write = TRUE)
+```
+
