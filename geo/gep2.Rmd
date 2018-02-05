@@ -1,0 +1,76 @@
+---
+title: "geo2"
+author: "Yutaka Kuroki"
+date: "2017年11月28日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+library(tidyverse)
+library(maptools)
+```
+
+
+# はじめに
+
+地理空間データ分析を行う。
+
+## モチベーション
+
+- GISとRの連携について学ぶ
+- 顧客の地理分布について統計処理を行いたい
+- 高度な手法も試したい
+
+## やってみたいこと
+
+- Rで地図プロット
+- GISの扱い
+- クリギング
+- 異方性モデリング
+
+# Rにおける地理データ
+
+基本的にspクラスを用いる。必要なのは
+
+- ポイントやライン、ポリゴンなどの座標データ
+- 境界を示す箱であるbbox
+- 投影・座標系情報のpro4string
+
+である。
+
+# データの読み込み
+
+ためしに日本の白地図をインポートしてみる。
+
+
+```{r japan_gis}
+getinfo.shape("E:/Git/DataAnalysis2017/data/gis/japan.shp")
+# 警告が出る。現在は推奨されていない？
+# japan <- readShapeSpatial("E:/Git/DataAnalysis2017/data/gis/japan.shp")
+# ということでこっち
+japan <- sf::st_read("E:/Git/DataAnalysis2017/data/gis/japan.shp")
+# なんとfilterが使える！！
+kanto <- japan %>% 
+  filter(KEN == "東京都"|
+           KEN == "神奈川県"|
+           KEN == "埼玉県"|
+           KEN == "千葉県"|
+           KEN == "栃木県"|
+           KEN == "茨城県"|
+           KEN == "群馬県"|
+           KEN == "静岡県"|
+           KEN == "山梨県") 
+kanto$geometry %>% plot()
+```
+
+島を取り除くのが面倒すぎる。図示はQGISで、分析はRで行っていく感じが良いか。
+
+# クリギング
+
+Z値を持つポイントセットから推定サーフェスを生成する手法

@@ -1,0 +1,218 @@
+---
+title: "geo1"
+author: "Yutaka Kuroki"
+date: "2017年11月21日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# パッケージのロード
+
+```{r library}
+library(tidyverse)
+library(igraph)
+library(stringr)
+library(lubridate)
+```
+
+# データのインポート
+```{r data_lab, include=FALSE, eval=TRUE}
+# 配布されたデータセット
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
+
+customer <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
+customer<- receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(year=year(dt), month=month(dt), customer_id) %>% 
+  summarise() %>% 
+  ungroup() %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 1) %>% 
+  select(-count) %>% 
+  mutate(repeater = TRUE) %>% 
+  right_join(customer, by="customer_id") %>% 
+  replace_na(list(repeater=FALSE)) %>% 
+  select(customer_id, repeater, sex, birth_age, comment, visit_interval, zip_code) %>% 
+  filter(is.na(comment) == TRUE)
+
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff_1.csv") %>% 
+  rename(store_id = store_id_num)
+
+product <- read_csv("E:/Git/DataAnalysis2017/data/product_2.csv")
+
+line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
+```
+
+```{r data_station}
+# 駅データより取得したもの
+station <- read_csv("E:/Git/DataAnalysis2017/data/station20171109free.csv")
+join <- read_csv("E:/Git/DataAnalysis2017/data/join20171109.csv")
+route <- read_csv("E:/Git/DataAnalysis2017/data/line20171109free.csv")
+company <- read_csv("E:/Git/DataAnalysis2017/data/company.csv")
+```
+
+
+# データ作成
+
+もう実行しなくていい
+```{zipcode_to_address}
+# 郵便番号 to 住所
+# 郵便局より取得
+ken_all <- read.csv("E:/Git/DataANalysis2017/data/ken_all.csv", fileEncoding = "shift-jis") %>% 
+  as_tibble() %>% 
+  mutate(address = paste0(l,m,s))
+# write.csv(ken_all, "E:/Git/DataAnalysis2017/data/zip_code.csv", fileEncoding = "shift-jis")
+```
+
+```{geo_coding}
+# 郵便番号に対応する緯度経度を取得
+# 東大のAPIから取ってきたデータ
+zipcode <- read.csv("E:/Git/DataAnalysis2017/data/zip_code2.csv", fileEncoding = "shift-jis") %>% 
+  as_tibble() %>% 
+  select(zipcode, address, fX,fY) 
+```
+
+
+```{geo_customer, eval=FALSE}
+# 顧客の郵便番号より緯度経度を取得
+
+# 東大からの緯度経度データとcustomerを結合
+customer_zip <- zipcode %>% 
+  right_join(customer, by=c("zipcode"="zip_code")) %>% 
+  select(customer_id, fX, fY, zipcode) %>% 
+  rename(lon=fX, lat=fY) %>% 
+  drop_na()
+# 最も利用している店舗も添えた
+geo_customer.tmp <- receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(customer_id, dt, store_id) %>% 
+  summarise() %>% 
+  ungroup() %>% 
+  select(-dt) %>% 
+  group_by(customer_id) %>% 
+  nest() %>% 
+  mutate(mode_store = map(data, ~modeest::mfv(unlist(.)))) %>% 
+  select(-data) %>% 
+  unnest() %>% 
+  right_join(customer, by="customer_id") %>% 
+  left_join(customer_zip, by="customer_id") %>% 
+  drop_na(lon, lat)
+
+geo_customer <- receipt %>% 
+  group_by(customer_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  right_join(geo_customer.tmp, by = "customer_id") 
+  
+
+# QGIS用のデータ。
+# write_csv(geo_customer, "E:/Git/DataAnalysis2017/data/geo_customer.csv")
+# customer_zip <- read_csv("E:/Git/DataAnalysis2017/data/customer_zip.csv")
+```
+
+```{geo_station}
+# 駅の緯度経度
+station %>% 
+  group_by(station_g_cd) %>% 
+  summarise(lon = mean(lon),
+            lat = mean(lat),
+            count = n()) # %>% 
+  write.csv("E:/Git/DataAnalysis2017/data/geo_station.csv")
+```
+
+
+```{r}
+# 駅のリンク
+data <- join %>% 
+  left_join(station %>% select(station_cd, station_g_cd),
+            by=c("station_cd1"="station_cd")) %>% 
+  rename(station_g_cd1 = station_g_cd) %>% 
+  left_join(station %>% select(station_cd, station_g_cd),
+            by=c("station_cd2"="station_cd")) %>% 
+  rename(station_g_cd2 = station_g_cd) %>% 
+  drop_na() %>% 
+  group_by(station_g_cd1, station_g_cd2) %>% 
+  summarise()
+
+join_graph <- graph.data.frame(data, directed=FALSE)
+```
+
+
+```{r route}
+# 首都圏のみの鉄道を取り出したい
+# ここでも郵便局からのken_allを使用する
+station %>% 
+  mutate(zipcode = str_replace(post,"-","")) %>% 
+  mutate(zipcode = as.integer(zipcode)) %>% 
+  left_join(ken_all, by = "zipcode") %>% 
+  filter(l == "東京都"|
+           l == "神奈川県"|
+           l == "埼玉県"|
+           l == "千葉県"|
+           l == "栃木県"|
+           l == "茨城県"|
+           l == "群馬県"|
+           l == "静岡県"|
+           l == "山梨県",
+         e_status == 0) %>% 
+  select(station_cd, station_g_cd, station_name, l, lon, lat, line_cd) %>% 
+  write_csv("E:/a.csv") # おためしで出力
+```
+
+
+
+# デシル分析
+
+- 地理情報をまだまだ眺めたい
+- 重要な顧客がどれぐらいいるのか。どのように分布しているのか
+
+```{r}
+# 2-8の法則が成り立っているかどうか
+receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(customer_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  arrange(desc(sales)) %>% 
+  left_join(customer, by = "customer_id") %>% 
+  filter(is.na(comment) == TRUE) %>% 
+  mutate(rate = sales/sum(sales)) %>% 
+  .$rate %>% 
+  cumsum() %>% 
+  barplot()
+# 3-7ぐらいだと思われる
+# でも一部の顧客が大半の売上を占めている
+```
+
+```{r decile}
+data.decile <- receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(customer_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  arrange(desc(sales)) %>% 
+  left_join(customer, by = "customer_id") %>% 
+  filter(is.na(comment) == TRUE) %>% 
+  mutate(decile = ntile(sales, 3))
+data.decile %>% 
+  ggplot(aes(x=sales))+
+  geom_histogram()+
+  scale_x_continuous(limits=c(-1000,500000))
+data.decile %>% 
+  select(customer_id, decile) %>% 
+  right_join(geo_customer, by = "customer_id") %>% 
+  write_csv( "E:/Git/DataAnalysis2017/data/geo_customer.csv")
+```
+
