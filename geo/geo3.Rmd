@@ -36,7 +36,7 @@ station
 route %>% 
   filter(line_name == "JR中央線(快速)")
 # line_cdは11312
-
+# 小田急　25001
 station_customer %>% 
   filter(line_cd == 25001) %>% 
   arrange(station_cd) 
