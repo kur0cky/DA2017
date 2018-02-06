@@ -1,0 +1,90 @@
+---
+title: "geo3"
+author: "Yutaka Kuroki"
+date: "2018年2月6日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r library}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r data import}
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+station_customer <- read_csv("data/station_customer.csv")
+join <- read_csv("E:/Git/DataAnalysis2017/data/join20171109.csv")
+route <- read_csv("E:/Git/DataAnalysis2017/data/line20171109free.csv")
+station <- read_csv("E:/Git/DataAnalysis2017/data/station20171109free.csv")
+```
+
+```{r}
+join
+route
+station
+```
+
+
+
+# 中央線
+
+```{r}
+route %>% 
+  filter(line_name == "JR中央線(快速)")
+# line_cdは11312
+
+station_customer %>% 
+  filter(line_cd == 25001) %>% 
+  arrange(station_cd) 
+```
+
+神田、御茶ノ水、中野、、かなり間が抜ける
+
+```{r}
+central <- station_customer %>% 
+  filter(line_cd == 25001) %>% 
+  arrange(station_cd) %>% 
+  group_by(customer_id) %>% 
+  summarise() %>% 
+  .$customer_id
+
+  
+receipt %>% 
+  filter(customer_id %in% central) %>% 
+  left_join(station_customer, by = "customer_id") %>% 
+  group_by(station_name) %>% 
+  summarise(sales = sum(in_tax), n=n()) %>% 
+  arrange(desc(n)) %>% 
+  mutate(sales_rank=rank(desc(sales))) %>% View()
+```
+
+
+
+
+```{r}
+receipt %>% 
+  filter(customer_id %in% setagaya) %>% 
+  left_join(store, by = "store_id") %>% 
+  group_by(store_name) %>% 
+  summarise(sales = sum(in_tax), n = n()) %>% 
+  arrange(desc(sales)) %>% 
+  mutate(sales_rank = rank(desc(sales)),
+         n_rank = rank(desc(n))) %>% 
+  mutate(rate = sales/sum(sales))
+```
+
+
+```{r}
+receipt %>% 
+  left_join(store, by = "store_id") %>% 
+  group_by(store_name) %>% 
+  summarise(sales = sum(in_tax),
+            n = n(),
+            tanka = sales/n) %>% 
+  arrange(desc(sales))
+```
+

@@ -18,33 +18,56 @@ library(tidyverse)
 library(lubridate)
 ```
 
-# 使用データ
+# data import
 
-- geo_customer.csv
-- station.csv
-- ken_all
-- line
-- route
+```{r data_lab, include=FALSE, eval=TRUE}
+# 配布されたデータセット
+receipt <- read_csv("E:/Git/DataAnalysis2017/data/receipt_henpin_syori_fin.csv")
 
-```{r}
-geo_customer <- read_csv("data/geo_customer.csv")
-station <- read_csv("data/station20171109free.csv")
-ken_all <- read.csv("data/ken_all.csv", fileEncoding = "shift-jis", stringsAsFactors = FALSE) %>% 
-  as_tibble()
+customer <- read_csv("E:/Git/DataAnalysis2017/data/customer_2.csv")
+customer<- receipt %>% 
+  filter(customer_id != -1) %>% 
+  group_by(year=year(dt), month=month(dt), customer_id) %>% 
+  summarise() %>% 
+  ungroup() %>% 
+  group_by(customer_id) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 1) %>% 
+  select(-count) %>% 
+  mutate(repeater = TRUE) %>% 
+  right_join(customer, by="customer_id") %>% 
+  replace_na(list(repeater=FALSE)) %>% 
+  select(customer_id, repeater, sex, birth_age, comment, visit_interval, zip_code) %>% 
+  filter(is.na(comment) == TRUE)
+
+store <- read_csv("E:/Git/DataAnalysis2017/data/store_1.csv")
+
+staff <- read_csv("E:/Git/DataAnalysis2017/data/staff_1.csv") %>% 
+  rename(store_id = store_id_num)
+
+product <- read_csv("E:/Git/DataAnalysis2017/data/product_2.csv")
+
+line <- read_csv("E:/Git/DataAnalysis2017/data/line_henpin_syori_fin.csv") %>% 
+  mutate(product_id = as.character(product_id)) %>% 
+  left_join(receipt %>% select(dt,receipt_id, customer_id, regi_staff), 
+            by="receipt_id") %>% 
+  left_join(customer %>% select(customer_id, comment),
+            by="customer_id") %>% 
+  left_join(product %>% select(product_id, product_name),
+            by="product_id")
 ```
 
 ```{r}
-station
-ken_all %>% as_tibble()
-
-
-
+geo_customer.tmp <- read_csv("data/geo_customer.csv")
+station.tmp <- read_csv("data/station20171109free.csv")
+ken_all <- read.csv("data/ken_all.csv", fileEncoding = "shift-jis", stringsAsFactors = FALSE) %>% 
+  as_tibble()
 ```
 
 # 関東圏に絞る
 
 ```{r}
-station <- station %>% 
+station <- station.tmp %>% 
   as_tibble() %>% 
   mutate(zipcode = as.integer(str_replace(post,"-",""))) %>% 
   left_join(ken_all, by = "zipcode") %>% 
@@ -59,7 +82,7 @@ station <- station %>%
 ```
 
 ```{r}
-geo_customer <- geo_customer %>% 
+geo_customer <- geo_customer.tmp %>% 
   left_join(ken_all, by = "zipcode") %>% 
   filter(l == "東京都"|
            l == "神奈川県"|
@@ -74,6 +97,7 @@ geo_customer <- geo_customer %>%
 
 
 ```{r}
+# 
 tmp <- geo_customer %>%
   mutate(a = 1) %>% 
   left_join(station %>% mutate(a=1) %>% select(-l, -m, -s) , by = "a")
