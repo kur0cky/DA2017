@@ -1,0 +1,194 @@
+---
+title: "0207_1"
+author: "Yutaka Kuroki"
+date: "2018年2月6日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+library(tidyverse)
+library(lubridate)
+library(prophet)
+```
+
+```{r data import}
+receipt <- read_csv("data/receipt_henpin_syori_fin.csv")
+store <- read_csv("data/store_1.csv")
+weather <- read_csv("data/weather.csv") %>% 
+  mutate(dt = as_date(Date),
+         rain = log1p(rain)) %>% 
+  select(dt, rain, pref)
+date <- read_csv("data/date.csv")
+```
+
+```{ holiday data}
+date <- read_csv("E:/Git/RC/data/date_info.csv")
+dt <- tibble(dt = seq(as_date("2015-07-01"), as_date("2017-06-30"), by = "d")) %>% 
+  full_join(date %>% select(dt=calendar_date, holiday=holiday_flg), by = "dt")
+
+holiday <- tibble(dt = as_date(c("2015-07-20",
+                                 "2015-09-21",
+                                 "2015-09-23",
+                                 "2015-10-12",
+                                 "2015-11-03",
+                                 "2015-11-23",
+                                 "2015-12-23",
+                                 "2015-12-30",
+                                 "2015-12-31")),
+                  holiday=1)
+
+
+tmp <- date %>% 
+  select(dt = calendar_date,
+         holiday = holiday_flg) %>% 
+  bind_rows(holiday) %>% 
+  arrange(dt) %>% 
+  right_join(tibble(dt = seq(as_date("2015-07-01"), as_date("2017-06-30"), by = "d")),
+             by = "dt") %>% 
+  replace_na(list(holiday=0))
+
+tmp2 <- tmp %>% 
+  mutate(year = year(dt),
+         month = month(dt),
+         day = day(dt),
+         wday = wday(dt)-1,
+         weekday = as.numeric(wday<6 & wday>0),
+         D1 = as.numeric(weekday==1 & holiday==1), # 平日かつ祝日
+         holiday_lead = lead(holiday), # 祝前日
+         D2 = as.numeric(0<wday & wday<5 & holiday_lead==1)) %>% 
+  select(-holiday_lead, -weekday, -holiday, -year, -month, -day)
+write_csv(tmp2, "data/date.csv")
+```
+
+# 全店舗の需要予測
+
+まずはベースのデータ。明らかにおかしい外れ値除去
+
+```{r all_sales}
+all.tmp <- receipt %>% 
+  group_by(dt) %>% 
+  summarise(sales = sum(in_tax))
+
+all.tmp %>% 
+  ggplot(aes(dt,sales))+
+  geom_point()
+
+all <- all.tmp %>% 
+  filter(sales > 500000)
+
+all %>% 
+  ggplot(aes(dt, sales))+
+  geom_point()
+```
+
+```{r regressor}
+weather_all <- weather %>% 
+  spread(pref, rain) %>% 
+  mutate(rain = (tokyo+yokohama)/2) %>% 
+  select(dt, rain)
+
+data_all <- all %>% 
+  right_join(date, by = "dt") %>%
+  left_join(weather_all, by = "dt")
+
+h <- data_all %>% 
+  filter(D1==1 | D2==1) %>% 
+  select(dt, D1, D2) %>% 
+  gather(holiday,value, -dt) %>% 
+  filter(value != 0) %>% 
+  mutate(upper_window = 1,
+         lower_window = 0) %>% 
+  select(holiday, ds = dt, upper_window, lower_window)
+```
+
+
+```{r}
+
+df <- data_all %>% 
+  select(ds = dt, y = sales, rain) %>% 
+  drop_na() 
+m_all <- prophet(yearly.seasonality = TRUE,
+                 weekly.seasonality = TRUE,
+                 holidays=h) %>% 
+  add_regressor("rain") %>% 
+  fit.prophet(df)
+future_all <- make_future_dataframe(m_all, 30) %>% 
+  left_join(weather_all %>% mutate(dt = as_datetime(dt)), by = c("ds" = "dt")) %>% 
+  replace_na(list(rain=0))
+forecast_all <- predict(m_all, future_all)
+
+plot(m_all, forecast_all)
+prophet_plot_components(m_all, forecast_all)
+```
+
+# 店舗別
+
+```{r}
+df_store <- receipt %>% 
+  group_by(store_id, dt) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  rename(ds = dt, y = sales) %>% 
+  left_join(weather_all, by = c("ds"="dt")) %>% 
+  nest()
+
+fit.prophet <- df_store %>% 
+  mutate(m = map(data, 
+                 ~ prophet(yearly.seasonality = TRUE,
+                           weekly.seasonality = TRUE,
+                           holidays = h) %>% 
+                   add_regressor("rain") %>% 
+                   fit.prophet(.x)),
+         future = map(m, 
+                      ~ make_future_dataframe(.x,30) %>% 
+                        left_join(weather_all %>% mutate(dt = as_datetime(dt)), by = c("ds" = "dt")) %>% 
+                        replace_na(list(rain=0))),
+         forecast = map2(m, future,
+                         ~ predict(.x,.y)))
+fit.prophet <- fit.prophet %>% 
+  mutate(plot = map2(m, forecast,
+                     ~ plot(.x,.y)),
+         component = map2(m, forecast,
+                          ~prophet_plot_components(.x,.y)))
+
+for(i in 1:12){
+  ggsave(file = str_c("fig/prophet/plot",i,".pdf"), plot = fit.prophet$plot[[i]],  width = 11, height = 8)
+}
+for(i in 1:12){
+  ggsave(file = str_c("fig/prophet/component",i,".pdf"), plot = fit.prophet$component[[i]],  width = 11, height = 8)
+}
+```
+
+```{r}
+
+plot(fit.prophet$m[[1]], fit.prophet$forecast[[1]])
+```
+
+
+
+```{r}
+forecast_all %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_all, by = c("ds"="dt")) %>% 
+  mutate(resid = sales - yhat) %>% 
+  ggplot(aes(ds))+
+  geom_point(aes(y = sales))+
+  geom_line(aes(y = yhat), colour="blue", size=0.1)+
+  geom_line(aes(y = resid))
+  
+
+forecast_all %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_all, by = c("ds"="dt")) %>% 
+  mutate(resid = sales - yhat) %>% 
+  ggplot(aes(resid))+
+  geom_density(adjust=1,fill="skyblue", colour="black")+
+  theme_bw()
+  
+```
+

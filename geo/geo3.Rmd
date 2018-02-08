@@ -10,6 +10,7 @@ editor_options:
 ```{r library}
 library(tidyverse)
 library(lubridate)
+library(prophet)
 ```
 
 ```{r data import}

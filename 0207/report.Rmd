@@ -1,0 +1,203 @@
+---
+title: "report"
+author: "Yutaka Kuroki"
+date: "2018年2月7日"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_section: true
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      cache = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(prophet)
+```
+
+
+```{r RDS}
+setwd("E:/Git/DataAnalysis2017")
+fit.prophet <- readRDS("RDS/fit_store.RDS")
+m_all <- readRDS("RDS/m_all.RDS")
+forecast_all <- readRDS("RDS/forecast_all.RDS")
+```
+
+# 考えているモデル
+
+- 売上をトレンド、季節周期、祝日、ノイズ、降水量の影響に分解する
+    - $y(t)$:売上
+    - $g(t)$:トレンド
+    - $s(t)$:季節周期
+    - $h(t)$:祝日効果
+    - $\varepsilon_t$:ノイズ
+    - $beta$:天候の係数パラメータ
+
+$$
+y(t) = g(t) + s(t) + h(t) + \beta \text{log}(1+(降水量)) + \varepsilon_t,\\ 
+\varepsilon_t\sim\mathcal N(0,\sigma^2).
+$$
+
+## トレンド$g(t)$
+
+- 成長を表す
+- 線形関数 or シグモイド関数（飽和成長）を考える
+- 変化点を取り入れる
+
+変化点を$t = s_j, j=1,\dots,S$とし、$s_j$に依存するダミー変数
+$$
+a_j(t) = 
+\begin{cases}
+1,\ \ \text{if }t\geq s_j\\
+0,\ \ \text{otherwise}
+\end{cases}
+$$
+を用意する。すると、シグモイド関数（$m$はオフセット）
+$$
+g(t) = \dfrac{C}{1 + \text{exp}(-k(t-m))}
+$$
+は変化点を取り入れ、
+$$
+g(t) = \dfrac{C(t)}{1 + \text{exp}(-k(t-\bf{a}(t)^{T}\mathbf\delta))(t - (m+\bf{a}(t)^T\mathbf\gamma))}
+$$
+のように表せる。$C(t)$は飽和上限で、$\mathbf\delta$はシグモイド関数の変化を表すパラメータベクトルである。
+$\mathbf\gamma$は変化点の前後を連続にさせるためのベクトルであり、$\mathbf\delta$を用いて
+$$
+\gamma_j = \left(s_j- m - \sum_{l<j}\gamma_l\right)(1 - \dfrac{k + \sum_{l<j}\delta_l}{k + \sum_{l\leq j}\delta_l})
+$$
+と表せる。
+
+線形関数の場合は、同様に
+$$
+g(t)=(k-\bf{a}(t)^{T}\mathbf\delta)t + (m+\bf{a}(t)^T\mathbf\gamma)
+$$
+と表せる。
+
+予め変化点の候補$s_j$を多く取り、$\delta_j \sim \text{Laplace}(0,\lambda)$とする。$\lambda$は変化点の多さを制御するハイパーパラメータである。
+
+## 季節周期$s(t)$
+
+- フーリエ関数を考える
+- $2N$個の三角関数の重ね合わせ
+
+$$
+s(t) = \sum_{n=1}^{N}\left(a_n\text{cos}\left(\dfrac{2\pi nt}{P}\right) + b_n\text{sin}\left(\dfrac{2\pi nt}{P}\right)\right)
+$$
+
+- 週の周期では$P=7$
+- 年の周期では$P=365$
+- 係数パラメータである$a_n, b_n$はAICなどを用いて推定することが出来る
+
+
+## 祝日効果$h(t)$
+
+- 同種の祝日効果は一定であるとする
+- 今回は、「平日かつ祝日」、「平日かつ祝前日」の2種を用意した
+
+$$
+h(t) = \sum_{i=1}^2\kappa_iD_{i,t}
+$$
+- $D_{1,t}$は$t$が平日かつ祝日のとき1、それ以外0
+- $D_{2,t}$は$t$が平日かつ祝前日のとき1、それ以外0
+- $\kappa_i$は係数パラメータ
+
+# 結果
+## 全体の売上
+
+```{r plot_all}
+plot(m_all, forecast_all)
+prophet_plot_components(m_all, forecast_all)
+```
+
+
+## 渋谷
+
+```{r plot_shibuya}
+fit.prophet$plot[[1]]
+prophet_plot_components(fit.prophet$m[[1]], fit.prophet$forecast[[1]])
+```
+
+## 銀座
+
+```{r plot_ginza}
+fit.prophet$plot[[2]]
+prophet_plot_components(fit.prophet$m[[2]], fit.prophet$forecast[[2]])
+```
+
+## 池袋
+
+```{r plot_ikebukuro}
+fit.prophet$plot[[3]]
+prophet_plot_components(fit.prophet$m[[3]], fit.prophet$forecast[[3]])
+```
+
+## 新宿
+
+```{r plot_shinjuku}
+fit.prophet$plot[[4]]
+prophet_plot_components(fit.prophet$m[[4]], fit.prophet$forecast[[4]])
+```
+
+## 目黒
+
+```{r plot_meguro}
+fit.prophet$plot[[5]]
+prophet_plot_components(fit.prophet$m[[5]], fit.prophet$forecast[[5]])
+```
+
+## 駒沢
+
+```{r plot_komazawa}
+fit.prophet$plot[[6]]
+prophet_plot_components(fit.prophet$m[[6]], fit.prophet$forecast[[6]])
+```
+
+## 二子玉川
+
+```{r plot_nikotama}
+fit.prophet$plot[[7]]
+prophet_plot_components(fit.prophet$m[[7]], fit.prophet$forecast[[7]])
+```
+
+## みなとみらい
+
+```{r plot_minatomirai}
+fit.prophet$plot[[8]]
+prophet_plot_components(fit.prophet$m[[8]], fit.prophet$forecast[[8]])
+```
+
+## 中野
+
+```{r plot_nakano}
+fit.prophet$plot[[1]]
+prophet_plot_components(fit.prophet$m[[1]], fit.prophet$forecast[[1]])
+```
+
+## 上大岡
+
+```{r plot_kamioooka}
+fit.prophet$plot[[9]]
+prophet_plot_components(fit.prophet$m[[9]], fit.prophet$forecast[[9]])
+```
+
+## 横浜
+
+```{r plot_yokohama}
+fit.prophet$plot[[10]]
+prophet_plot_components(fit.prophet$m[[10]], fit.prophet$forecast[[10]])
+```
+
+## 吉祥寺
+
+```{r plot_kichijoji}
+fit.prophet$plot[[11]]
+prophet_plot_components(fit.prophet$m[[11]], fit.prophet$forecast[[11]])
+```
