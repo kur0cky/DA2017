@@ -201,3 +201,71 @@ prophet_plot_components(fit.prophet$m[[10]], fit.prophet$forecast[[10]])
 fit.prophet$plot[[11]]
 prophet_plot_components(fit.prophet$m[[11]], fit.prophet$forecast[[11]])
 ```
+
+# 結果の整理
+
+```{r}
+result <- fit.prophet %>% 
+  mutate(forecast = map2(forecast, data,
+                         ~ .x %>% 
+                           mutate(ds = as_date(ds)) %>% 
+                           left_join(.y, by = "ds"))) %>% 
+  select(store_id, forecast) %>% 
+  unnest() %>% 
+  drop_na() %>% 
+  mutate(resid = y-yhat)
+
+
+## 決定係数
+result %>% 
+  group_by(store_id) %>% 
+  summarise(rhat = cor(y,yhat)^2)
+  
+result %>% 
+  ggplot(aes(y, yhat, group=store_id)) +
+  geom_point() +
+  facet_wrap(~store_id, scale = "free")
+
+```
+
+```{r}
+result %>% 
+  ggplot(aes(yhat, resid)) +
+  geom_point() +
+  facet_wrap(~store_id, scale = "free")
+
+
+result %>% 
+  group_by(store_id) %>% 
+  mutate(resid = scale(resid)) %>% 
+  ggplot(aes(yhat, sqrt(abs(resid)))) +
+  geom_point() +
+  facet_wrap(~store_id, scale="free_x")
+```
+
+
+
+```{r}
+result %>% 
+  group_by(store_id, wday = wday(ds)) %>% 
+  summarise(mean_weekly = mean(weekly, na.rm=TRUE),
+            mean_trend = mean(trend, na.rm=TRUE))  %>% 
+  mutate(rate = mean_weekly / mean_trend) %>% filter(store_id == 3)
+  filter(wday != 3) %>% 
+  ggplot(aes(wday, rate))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~store_id)
+```
+
+
+```{r}
+result %>% 
+  select(store_id, rain.x, rain.y, trend) %>% 
+  group_by(store_id) %>% 
+  nest() %>% 
+  mutate(lm = map(data, ~lm(rain.y ~ rain.x, data=.x)),
+         coef = map_dbl(lm, ~.x$coefficients[2]*10000),
+         trend = map_dbl(data, ~median(.x$trend)),
+         coef/trend)
+```
+
