@@ -116,9 +116,8 @@ h <- data_all %>%
 ```
 
 
-```{r}
-
-df <- data_all %>% 
+```{r prophet_all}
+df_all <- data_all %>% 
   mutate(sales = log(sales)) %>% 
   select(ds = dt, y = sales, rain) %>% 
   drop_na() 
@@ -126,33 +125,20 @@ m_all <- prophet(yearly.seasonality = TRUE,
                  weekly.seasonality = TRUE,
                  holidays=h) %>% 
   add_regressor("rain") %>% 
-  fit.prophet(df)
+  fit.prophet(df_all)
 future_all <- make_future_dataframe(m_all, 30) %>% 
   left_join(weather_all %>% mutate(dt = as_datetime(dt)), by = c("ds" = "dt")) %>% 
   replace_na(list(rain=0))
 forecast_all <- predict(m_all, future_all) %>% 
   as_tibble() %>% 
   mutate(ds = as_date(ds)) %>% 
-  left_join(df, by = "ds") %>% 
+  left_join(df_all, by = "ds") %>% 
   mutate(resid = y - yhat)
-
-plot(m_all, forecast_all)
-prophet_plot_components(m_all, forecast_all)
-
-forecast_all %>% 
-  select(y, yhat) %>% 
-  drop_na() %>% 
-  cor()
--.961^2
-
-forecast_all %>% 
-  ggplot(aes(yhat, y))+
-  geom_point()
 ```
 
 # 店舗別
 
-```{r}
+```{r prophet_store}
 df_store <- receipt %>% 
   group_by(store_id, dt) %>% 
   summarise(sales = log(sum(in_tax))) %>% 
@@ -173,20 +159,11 @@ fit.prophet <- df_store %>%
                         replace_na(list(rain=0))),
          forecast = map2(m, future,
                          ~ predict(.x,.y)))
-fit.prophet <- fit.prophet %>% 
-  mutate(plot = map2(m, forecast,
-                     ~ plot(.x,.y)),
-         component = map2(m, forecast,
-                          ~prophet_plot_components(.x,.y)))
-
-for(i in 1:12){
-  ggsave(file = str_c("fig/prophet/log/plot",i,".pdf"), plot = fit.prophet$plot[[i]],  width = 11, height = 8)
-}
 ```
 
 
 
-```{r}
+```{r result}
 result <- fit.prophet %>% 
   mutate(forecast = map2(forecast, data,
                          ~ .x %>% 
@@ -194,12 +171,36 @@ result <- fit.prophet %>%
                            left_join(.y, by = "ds"))) %>% 
   select(store_id, forecast) %>% 
   unnest() %>% 
-  mutate(resid = y - yhat)
+  rename(rain = rain.y, rain_coef = rain.x) %>% 
+  mutate(resid = y - yhat) %>% 
+  drop_na()
 ```
+
+# 結果をイジイジ
+
+## 全体
+
+```{r}
+plot(m_all, forecast_all)
+prophet_plot_components(m_all, forecast_all)
+
+forecast_all %>% 
+  select(y, yhat) %>% 
+  drop_na() %>% 
+  cor()
+-.961^2
+
+forecast_all %>% 
+  ggplot(aes(yhat, y))+
+  geom_point()
+```
+
+
+## 店舗別
+
 
 ```{r}
 result %>% 
-  drop_na() %>% 
   group_by(store_id) %>% 
   summarise(rmse = sqrt(mean(resid^2)),
             scale = median(trend),
@@ -209,13 +210,13 @@ result %>%
             by = "store_id") %>% 
   arrange(rmse_rate) %>% 
   mutate(rank_rmse = rank(rmse),
-         rank_rhat = rank(desc(rhat)))
+         rank_rhat = rank(desc(rhat))) %>% 
+  kable()
 ```
 
 
-```{r}
+```{r weekly}
 result %>% 
-  drop_na() %>% 
   mutate(wday = wday(ds)) %>% 
   filter(wday != 3) %>% 
   group_by(store_id, wday) %>% 
@@ -225,21 +226,26 @@ result %>%
   facet_wrap(~store_id)
 ```
 
-```{r}
+```{r rain_coef}
 result %>% 
-  select(store_id, ds, rain.x) %>% 
+  select(store_id, ds, rain_coef) %>% 
   left_join(store, by = "store_id") %>% 
-  ggplot(aes(ds, rain.x, group=store_name))+
+  ggplot(aes(ds, rain_coef, group=store_name))+
   geom_line()+
   facet_wrap(~store_name)
+```
 
+```{r trend}
 result %>% 
   select(store_id, ds, trend) %>% 
   left_join(store, by = "store_id") %>% 
-  ggplot(aes(ds, trend, group=store_id, colour = store_id))+
+  ggplot(aes(ds, trend, group=store_name))+
   geom_line()+
-  theme_bw()
+  theme_bw()+
+  facet_wrap(~store_name)
+```
 
+```{r trend_obz}
 result %>% 
   select(store_id, ds, trend, y) %>% 
   left_join(store, by = "store_id") %>% 
@@ -248,14 +254,29 @@ result %>%
   geom_line(colour="red", size=1)+
   theme_bw()+
   facet_wrap(~ store_name)
-  
+```
+
+```{r resid}
 result %>% 
   select(store_id, ds, resid) %>% 
   left_join(store, by = "store_id") %>% 
   ggplot(aes(ds, resid))+
   geom_line()+
   facet_wrap(~ store_name)
+```
 
+
+```{r}
+result %>% 
+  left_join(store, by = "store_id") %>% 
+  ggplot(aes(y, yhat))+
+  geom_point()+
+  geom_abline(colour="red", size=1)+
+  facet_wrap(~store_name, scale="free")
+```
+
+
+```{r acf}
 
 result %>% 
   select(store_id, resid) %>% 
@@ -277,4 +298,3 @@ result %>%
   theme_bw()+
   facet_wrap(~store_name)
 ```
-
