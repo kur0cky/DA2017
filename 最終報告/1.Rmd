@@ -1,0 +1,21 @@
+---
+title: "最終報告1"
+author: "東京理科大学 工学部経営工学科 4年\\ 黒木裕鷹"
+date: "2018年2月17日"
+output:
+  revealjs::revealjs_presentation:
+    theme: default
+    center: true
+    fig_height: 3.5
+    df_print: paged
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
