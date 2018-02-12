@@ -1,0 +1,249 @@
+---
+title: "ML1"
+author: "Yutaka Kuroki"
+date: "2018年2月12日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+library(tidyverse)
+library(lubridate)
+library(prophet)
+library(knitr)
+library(RcppRoll)
+library(caret)
+```
+
+```{r data import, include=FALSE}
+setwd("E:/Git/DataAnalysis2017")
+receipt <- read_csv("data/receipt_henpin_syori_fin.csv")
+store <- read_csv("data/store_1.csv")
+weather <- read_csv("data/weather.csv") %>% 
+  mutate(dt = as_date(Date),
+         rain = log1p(rain)) %>% 
+  select(dt, rain, pref)
+date <- read_csv("data/date.csv")
+```
+
+```{r}
+Train <- receipt %>% 
+  group_by(dt) %>% 
+  summarise(y = log(sum(in_tax))) %>% 
+  filter(dt < as_date("2017-06-01"))
+```
+
+
+```{r}
+Train %>% 
+  nest() %>% 
+  mutate(min_date = map(data, ~ min(.x$dt)),
+         max_date = map(data, ~ max(.x$dt)),
+         covered_dates = map2(min_date, max_date,
+                              ~ tibble(dt = seq(.x,.y,by="d")))) %>% 
+  mutate(data = map2(data, covered_dates,
+                     ~ .x %>% 
+                       right_join(.y, by="dt")),
+         data = map(data,
+                    ~ .x %>% 
+                      mutate(ma7 = roll_mean(y,
+                                             n=7L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7),
+                             ma28 = roll_mean(y,
+                                             n=28L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7),
+                             ma56 = roll_mean(y,
+                                             n=56L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7),
+                             ma112 = roll_mean(y,
+                                             n=112L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7)))) %>% 
+  mutate(data = map(data,
+                    ~ .x %>% 
+                      mutate(wday = wday(dt)) %>% 
+                      group_by(wday) %>% 
+                      mutate(wday_ma2 = roll_mean(y,
+                                                   n=2L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1),
+                             wday_ma4 = roll_mean(y,
+                                                   n=4L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1),
+                             wday_ma8 = roll_mean(y,
+                                                   n=8L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1),
+                             wday_ma16 = roll_mean(y,
+                                                   n=16L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1)))) %>% 
+  select( data) %>% 
+  unnest()->tmp
+
+
+train <- tmp %>% 
+  left_join(weather %>%
+              group_by(dt) %>% 
+              summarise(rain = mean(rain)),
+            by = "dt") %>% 
+  left_join(date %>% select(-wday), by = "dt") %>% 
+  drop_na()
+
+
+
+train.lab <- train$y
+
+train.mat <- train %>% 
+  select( -dt, -y) %>% 
+  as.matrix()
+
+```
+
+
+```{r}
+cv0 <- xgb.cv(data = train.mat, label = train.lab, nrounds=1000, eta=0.01, max_depth=7, nfold=10, na.rm=TRUE, early_stopping_rounds = 10)
+
+fit0.xgb <- xgboost(data=train.mat, label=train.lab,
+        nrounds = 663,
+        eta=0.01,
+        max_depth = 7)
+
+xgb.importance(colnames(train.mat),
+               fit0.xgb)
+```
+
+
+```{r}
+Test <- receipt %>% 
+  group_by(dt) %>% 
+  summarise(y = log(sum(in_tax))) 
+```
+
+
+```{r}
+Test %>% 
+  nest() %>% 
+  mutate(min_date = map(data, ~ min(.x$dt)),
+         max_date = map(data, ~ max(.x$dt)),
+         covered_dates = map2(min_date, max_date,
+                              ~ tibble(dt = seq(.x,.y,by="d")))) %>% 
+  mutate(data = map2(data, covered_dates,
+                     ~ .x %>% 
+                       right_join(.y, by="dt")),
+         data = map(data,
+                    ~ .x %>% 
+                      mutate(ma7 = roll_mean(y,
+                                             n=7L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7),
+                             ma28 = roll_mean(y,
+                                             n=28L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7),
+                             ma56 = roll_mean(y,
+                                             n=56L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7),
+                             ma112 = roll_mean(y,
+                                             n=112L,
+                                             na.rm=TRUE,
+                                             fill=NA,
+                                             align = "right") %>% 
+                               lag(7)))) %>% 
+  mutate(data = map(data,
+                    ~ .x %>% 
+                      mutate(wday = wday(dt)) %>% 
+                      group_by(wday) %>% 
+                      mutate(wday_ma2 = roll_mean(y,
+                                                   n=2L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1),
+                             wday_ma4 = roll_mean(y,
+                                                   n=4L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1),
+                             wday_ma8 = roll_mean(y,
+                                                   n=8L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1),
+                             wday_ma16 = roll_mean(y,
+                                                   n=16L,
+                                                   na.rm=TRUE,
+                                                   fill=NA,
+                                                   align="right") %>% 
+                               lag(1)))) %>% 
+  select(data) %>% 
+  unnest() -> tmp
+
+
+test <- tmp %>% 
+  left_join(weather %>%
+              group_by(dt) %>% 
+              summarise(rain = mean(rain)),
+            by = "dt") %>% 
+  left_join(date %>% select(-wday), by = "dt") %>% 
+  drop_na() %>% 
+  filter(dt >= as_date("2017-06-01"))
+
+
+
+test.lab <- test$y
+
+test.mat <- test %>% 
+  select(-dt, -y) %>% 
+  as.matrix()
+
+```
+
+```{r}
+(test.lab-predict(fit0.xgb, test.mat))^2 %>% 
+  mean() %>% 
+  sqrt()
+
+
+tibble(y = test.lab,
+       yhat = predict(fit0.xgb, test.mat),
+       index = 1:length(test.lab)) %>% 
+  ggplot(aes(index))+
+  geom_point(aes(y = y))+
+  geom_line(aes(y = yhat), colour="blue")
+```
+

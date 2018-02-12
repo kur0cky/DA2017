@@ -189,9 +189,10 @@ forecast_all %>%
   select(y, yhat) %>% 
   drop_na() %>% 
   cor()
--.961^2
+0.961^2
 
 forecast_all %>% 
+  arrange(desc(resid)) %>% 
   ggplot(aes(yhat, y))+
   geom_point()
 ```
@@ -213,13 +214,18 @@ result %>%
   mutate(rank_rmse = rank(rmse),
          rank_rhat = rank(desc(rhat))) %>% 
   kable()
+result %>% 
+  ggplot(aes(y, yhat))+
+  geom_point()+
+  facet_wrap(~store_id, scale="free")
 ```
 
 
 ```{r weekly}
 result %>% 
   mutate(wday = wday(ds)) %>% 
-  filter(wday != 3) %>% 
+  #filter(wday != 3) %>% 
+  filter(store_id == 10) %>% 
   group_by(store_id, wday) %>% 
   summarise(weekly = median(weekly)) %>% 
   ggplot(aes(wday, weekly))+
@@ -248,15 +254,16 @@ weekly_circle <- weekly %>%
 weekly %>% 
   select(1:13) %>% 
   gather(store_name, value, -wday) %>% 
-  left_join(weekly_circle, by = "wday") %>% 
+  left_join(weekly_circle, by = "wday")%>% 
+  bind_rows(weekly_circle %>% mutate(store_name = "曜日")) %>% 
   mutate(x = value * cos,
          y = value * sin) %>% 
   group_by(store_name) %>% 
   summarise(x = mean(x,na.rm=TRUE),
             y = mean(y, na.rm=TRUE),
          dist = sqrt(x^2 + y^2)) %>% 
-  ggplot(aes(x/dist,y/dist))+
-  geom_text(aes(label=store_name))+
+  ggplot(aes(x,y))+
+  geom_point(aes(label=store_name))+
   scale_x_continuous(limits=c(-1,1))+
   scale_y_continuous(limits=c(-1,1))
 ```
@@ -307,9 +314,15 @@ result %>%
 result %>% 
   select(store_id, ds, resid) %>% 
   left_join(store, by = "store_id") %>% 
-  ggplot(aes(ds, resid))+
-  geom_line()+
-  facet_wrap(~ store_name)
+  select(store_id, ds, resid) %>% 
+  spread(store_id, resid) %>% 
+  select(-ds) %>% 
+  drop_na() %>% 
+  cor() ->a
+result %>% 
+  ggplot(aes(resid))+
+  geom_density()+
+  facet_wrap(~ store_id)
 ```
 
 
