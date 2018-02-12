@@ -21,10 +21,12 @@ knitr::opts_chunk$set(echo = FALSE,
 library(tidyverse)
 library(lubridate)
 library(prophet)
+library(knitr)
 ```
 
 
-```{r data import}
+```{r data import, include=FALSE}
+setwd("E:/Git/DataAnalysis2017")
 receipt <- read_csv("data/receipt_henpin_syori_fin.csv")
 store <- read_csv("data/store_1.csv")
 weather <- read_csv("data/weather.csv") %>% 
@@ -34,7 +36,7 @@ weather <- read_csv("data/weather.csv") %>%
 date <- read_csv("data/date.csv")
 ```
 
-```{ holiday data}
+```{r holiday data, include=FALSE, eval=FALSE}
 date <- read_csv("E:/Git/RC/data/date_info.csv")
 dt <- tibble(dt = seq(as_date("2015-07-01"), as_date("2017-06-30"), by = "d")) %>% 
   full_join(date %>% select(dt=calendar_date, holiday=holiday_flg), by = "dt")
@@ -116,7 +118,7 @@ h <- data_all %>%
 ```
 
 
-```{r prophet_all}
+```{r prophet_all, include=FALSE}
 df_all <- data_all %>% 
   mutate(sales = log(sales)) %>% 
   select(ds = dt, y = sales, rain) %>% 
@@ -138,7 +140,7 @@ forecast_all <- predict(m_all, future_all) %>%
 
 # 店舗別
 
-```{r prophet_store}
+```{r prophet_store, include=FALSE}
 df_store <- receipt %>% 
   group_by(store_id, dt) %>% 
   summarise(sales = log(sum(in_tax))) %>% 
@@ -181,8 +183,7 @@ result <- fit.prophet %>%
 ## 全体
 
 ```{r}
-plot(m_all, forecast_all)
-prophet_plot_components(m_all, forecast_all)
+
 
 forecast_all %>% 
   select(y, yhat) %>% 
@@ -224,7 +225,53 @@ result %>%
   ggplot(aes(wday, weekly))+
   geom_bar(stat="identity")+
   facet_wrap(~store_id)
+
+
+weekly <- result %>% 
+  mutate(wday = wday(ds)) %>% 
+  group_by(store_id, wday) %>% 
+  summarise(weekly = median(weekly)) %>% 
+  left_join(store %>% select(store_id, store_name), 
+            by = "store_id") %>% 
+  ungroup() %>% 
+  select(-store_id) %>% 
+  spread(store_name, weekly) %>% 
+  mutate(theta = seq(0, 2*pi, length.out = 8)[1:7],
+         sin = sin(theta),
+         cos = cos(theta))
+
+
+weekly_circle <- weekly %>% 
+  select(theta:cos) %>% 
+  mutate(wday = 1:n())
+
+weekly %>% 
+  select(1:13) %>% 
+  gather(store_name, value, -wday) %>% 
+  left_join(weekly_circle, by = "wday") %>% 
+  mutate(x = value * cos,
+         y = value * sin) %>% 
+  group_by(store_name) %>% 
+  summarise(x = mean(x,na.rm=TRUE),
+            y = mean(y, na.rm=TRUE),
+         dist = sqrt(x^2 + y^2)) %>% 
+  ggplot(aes(x/dist,y/dist))+
+  geom_text(aes(label=store_name))+
+  scale_x_continuous(limits=c(-1,1))+
+  scale_y_continuous(limits=c(-1,1))
 ```
+
+
+```{r yearly}
+result %>% 
+  select(store_id, ds, yearly) %>% 
+  ggplot(aes(ds, yearly))+
+  geom_line()+
+  facet_wrap(~store_id)
+  
+
+```
+
 
 ```{r rain_coef}
 result %>% 
@@ -266,7 +313,7 @@ result %>%
 ```
 
 
-```{r}
+```{r y_yhat}
 result %>% 
   left_join(store, by = "store_id") %>% 
   ggplot(aes(y, yhat))+
