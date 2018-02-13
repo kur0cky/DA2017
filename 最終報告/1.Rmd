@@ -1,6 +1,6 @@
 ---
 title: "最終報告1"
-author: "東京理科大学 工学部経営工学科 4年\\ 黒木裕鷹"
+author: "東京理科大学 4年 黒木裕鷹"
 date: "2018年2月17日"
 output:
   revealjs::revealjs_presentation:
@@ -19,3 +19,66 @@ knitr::opts_chunk$set(warning = FALSE)
 knitr::opts_chunk$set(cache = TRUE)
 ```
 
+```{r library, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(prophet)
+```
+
+
+# はじめに
+
+## 分析背景
+
+- 美容業界の課題
+    - 人件費の占める割合が 40% と大きい。
+    - 最低限のスタッフによるシフト最適化が望まれる。
+- このように、中期の需要予測は重要な課題である。
+
+# モデル
+
+## 統計モデリング
+
+- 売上をトレンド、季節周期、祝日、ノイズ、降水量の影響に分解する
+    - $y(t)$:売上
+    - $g(t)$:トレンド
+    - $s(t)$:季節周期
+    - $h(t)$:祝日効果
+    - $\varepsilon_t$:ノイズ
+    - $\beta$:天候の係数パラメータ
+    
+$$
+y(t) = g(t) + s(t) + h(t) + \beta \text{log}(1+(降水量)) + \varepsilon_t,\\ 
+\varepsilon_t\sim\mathcal N(0,\sigma^2).
+$$
+
+## トレンド$g(t)$
+
+- 成長、ベースラインを表す
+- 線形関数 or シグモイド関数（飽和成長）を考える
+
+$$
+g(t) = \dfrac{C}{1 + \text{exp}(-k(t-m))}
+$$
+
+## 変化点の追加
+
+変化点を$t = s_j, j=1,\dots,S$とし、$s_j$に依存するダミー変数
+$$
+a_j(t) = 
+\begin{cases}
+1,\ \ \text{if }t\geq s_j\\
+0,\ \ \text{otherwise}
+\end{cases}
+$$
+を導入することにより変化点を取り入れたトレンドを考えることが出来る
+
+$$
+g(t) = \dfrac{C(t)}{1 + \text{exp}(-k(t-\mathbf{a}(t)^\text{T}\mathbf\delta))(t - (m+\mathbf{a}(t)^\text T\mathbf\gamma))}\\
+\gamma_j = \left(s_j- m - \sum_{l<j}\gamma_l\right)(1 - \dfrac{k + \sum_{l<j}\delta_l}{k + \sum_{l\leq j}\delta_l})
+$$
+
+## 変化点の事前分布
+
+予め変化点の候補$s_j$を多く取り、$\delta_j \sim \text{Laplace}(0,\lambda)$とする。$\lambda$は変化点の多さを制御するハイパーパラメータである。
