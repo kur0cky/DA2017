@@ -1,0 +1,413 @@
+---
+title: "report3"
+author: "Yutaka Kuroki"
+date: "2018年2月12日"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r library}
+library(tidyverse)
+library(lubridate)
+library(prophet)
+library(knitr)
+```
+
+
+```{r data import, include=FALSE}
+setwd("E:/Git/DataAnalysis2017")
+receipt <- read_csv("data/receipt_henpin_syori_fin.csv")
+store <- read_csv("data/store_1.csv")
+weather <- read_csv("data/weather.csv") %>% 
+  mutate(dt = as_date(Date),
+         rain = log1p(rain)) %>% 
+  select(dt, rain, pref)
+date <- read_csv("data/date.csv")
+```
+
+```{r holiday data, include=FALSE, eval=FALSE}
+date <- read_csv("E:/Git/RC/data/date_info.csv")
+dt <- tibble(dt = seq(as_date("2015-07-01"), as_date("2017-06-30"), by = "d")) %>% 
+  full_join(date %>% select(dt=calendar_date, holiday=holiday_flg), by = "dt")
+
+holiday <- tibble(dt = as_date(c("2015-07-20",
+                                 "2015-08-13",
+                                 "2015-08-14",
+                                 "2015-08-15",
+                                 "2015-08-16",
+                                 "2015-09-21",
+                                 "2015-09-23",
+                                 "2015-10-12",
+                                 "2015-11-03",
+                                 "2015-11-23",
+                                 "2015-12-23",
+                                 "2015-12-30",
+                                 "2015-12-31")),
+                  holiday=1)
+
+
+tmp <- date %>% 
+  select(dt = calendar_date,
+         holiday = holiday_flg) %>% 
+  bind_rows(holiday) %>% 
+  arrange(dt) %>% 
+  right_join(tibble(dt = seq(as_date("2015-07-01"), as_date("2017-06-30"), by = "d")),
+             by = "dt") %>% 
+  replace_na(list(holiday=0))
+
+tmp2 <- tmp %>% 
+  mutate(year = year(dt),
+         month = month(dt),
+         day = day(dt),
+         wday = wday(dt)-1,
+         weekday = as.numeric(wday<6 & wday>0),
+         D1 = as.numeric(weekday==1 & holiday==1), # 平日かつ祝日
+         holiday_lead = lead(holiday), # 祝前日
+         D2 = as.numeric(0<wday & wday<5 & holiday_lead==1)) %>% 
+  select(-holiday_lead, -weekday, -holiday, -year, -month, -day)
+write_csv(tmp2, "data/date.csv")
+```
+
+
+# 全店舗の需要予測
+
+まずはベースのデータ。明らかにおかしい外れ値除去
+
+```{r all_sales}
+all.tmp <- receipt %>% 
+  group_by(dt) %>% 
+  summarise(sales = sum(in_tax))
+
+all.tmp %>% 
+  ggplot(aes(dt,sales))+
+  geom_point()
+
+all <- all.tmp %>% 
+  filter(sales > 500000)
+
+all %>% 
+  ggplot(aes(dt, sales))+
+  geom_point()
+```
+
+```{r regressor}
+weather_all <- weather %>% 
+  spread(pref, rain) %>% 
+  mutate(rain = (tokyo+yokohama)/2) %>% 
+  select(dt, rain)
+
+data_all <- all %>% 
+  right_join(date, by = "dt") %>%
+  left_join(weather_all, by = "dt")
+
+h <- data_all %>% 
+  filter(D1==1 | D2==1) %>% 
+  select(dt, D1, D2) %>% 
+  gather(holiday,value, -dt) %>% 
+  filter(value != 0) %>% 
+  mutate(upper_window = 0,
+         lower_window = 0) %>% 
+  select(holiday, ds = dt, upper_window, lower_window)
+```
+
+
+```{r prophet_all, include=FALSE}
+df_all <- data_all %>% 
+  mutate(sales = log(sales)) %>% 
+  select(ds = dt, y = sales, rain) %>% 
+  drop_na() %>% 
+  filter(ds < as_date("2017-06-01"))
+m_all <- prophet(yearly.seasonality = TRUE,
+                 weekly.seasonality = TRUE,
+                 holidays=h) %>% 
+  add_regressor("rain") %>% 
+  fit.prophet(df_all)
+
+future_all <- make_future_dataframe(m_all, 30) %>% 
+  left_join(weather_all %>% mutate(dt = as_datetime(dt)), by = c("ds" = "dt"))
+
+forecast_all <- predict(m_all, future_all) %>% 
+  as_tibble() %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_all %>% select(dt, sales),
+            by = c("ds"="dt")) %>% 
+  mutate(y = log(sales)) %>% 
+  mutate(resid = y - yhat,
+         test = if_else(ds >= as_date("2017-06-01"), "test", "train"))
+  
+```
+
+
+```{r result_all}
+
+
+forecast_all %>% 
+  select(y, yhat) %>% 
+  drop_na() %>% 
+  cor()
+0.961^2
+
+forecast_all %>% 
+  arrange(desc(resid)) %>% 
+  ggplot(aes(yhat, y))+
+  geom_point()
+
+data_all %>% 
+  transmute(ds = dt,
+            y = log(sales)) %>% 
+  left_join(forecast_all %>% select(-y), by = "ds") %>%
+  filter(ds >= as_date("2017-06-01")) %>% 
+  ggplot(aes(ds))+
+  geom_point(aes(y = y))+
+  geom_line(aes(y = yhat), colour="skyblue")
+
+data_all %>% 
+  transmute(ds = dt,
+            y = log(sales)) %>% 
+  left_join(forecast_all %>% select(-y), by = "ds") %>%
+  filter(ds >= as_date("2017-06-01")) %>% 
+  transmute(ds, y, yhat,
+            resid = y-yhat) %>% 
+  summarise(rmse = sqrt(mean(resid^2)),
+            Rsq = cor(y, yhat)^2)
+```
+
+
+# 店舗別
+
+```{r prophet_store, include=FALSE}
+data_store <- receipt %>% 
+  group_by(store_id, dt) %>% 
+  summarise(sales = log(sum(in_tax))) %>% 
+  rename(ds = dt, y = sales) %>% 
+  left_join(weather_all, by = c("ds"="dt")) 
+
+df_store <- data_store %>% 
+  filter(ds < as_date("2017-06-01")) %>% 
+  group_by(store_id) %>% 
+  nest()
+
+fit.prophet <- df_store %>% 
+  mutate(m = map(data, 
+                 ~ prophet(yearly.seasonality = TRUE,
+                           weekly.seasonality = TRUE,
+                           holidays = h) %>% 
+                   add_regressor("rain") %>% 
+                   fit.prophet(.x)),
+         future = map(m, 
+                      ~ make_future_dataframe(.x,30) %>% 
+                        left_join(weather_all %>% mutate(dt = as_datetime(dt)), by = c("ds" = "dt"))),
+         forecast = map2(m, future,
+                         ~ predict(.x,.y)))
+```
+
+
+
+
+
+```{r}
+fit.prophet %>% 
+  select(store_id, forecast) %>% 
+  unnest() %>% 
+  filter(as_date(ds) >= as_date("2017-06-01")) %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_store, by = c("store_id", "ds")) %>% 
+  transmute(store_id, ds, y, yhat,
+            resid = y - yhat) %>% 
+  ggplot(aes(y,yhat))+
+  geom_point()+
+  geom_abline(colour="red", size=1)+
+  facet_wrap(~store_id, scale="free")
+
+fit.prophet %>% 
+  select(store_id, forecast) %>% 
+  unnest() %>% 
+  filter(as_date(ds) >= as_date("2017-06-01")) %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_store, by = c("store_id", "ds")) %>% 
+  transmute(store_id, ds, y, yhat,
+            resid = y - yhat) %>% 
+  ggplot(aes(ds))+
+  geom_point(aes(y = y))+
+  geom_line(aes(y = yhat), colour="skyblue", size=1)+
+  facet_wrap(~store_id, scale="free")
+
+fit.prophet %>% 
+  select(store_id, forecast) %>% 
+  unnest() %>% 
+  filter(as_date(ds) >= as_date("2017-06-01")) %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_store, by = c("store_id", "ds")) %>% 
+  transmute(store_id, ds, y, yhat,
+            resid = y - yhat) %>% 
+  drop_na() %>% 
+  group_by(store_id) %>% 
+  summarise(RMSE = sqrt(mean(resid^2)),
+            Rsq = cor(y,yhat)^2) %>% 
+  arrange(RMSE)
+```
+
+```{r}
+fit.prophet %>% 
+  select(store_id, forecast) %>% 
+  unnest() %>% 
+  filter(as_date(ds) >= as_date("2017-06-01")) %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_store, by = c("store_id", "ds")) %>% 
+  transmute(store_id, ds, y, yhat,
+            resid = y - yhat) %>% 
+  ggplot(aes(ds, resid))+
+  geom_point()+
+  facet_wrap(~store_id)
+```
+
+# figure
+
+```{r all_predict}
+forecast_all %>% 
+  ggplot(aes(ds, colour = test))+
+  geom_line(aes(y = exp(yhat)), colour="skyblue", size=0.9)+
+  geom_point(aes(y = exp(y)), size=2)+
+  scale_colour_manual(values = c(test = "red", train="gray25"),
+                      name = "")+
+  labs(title = "全体の売上とフィッティング",x = "", y = "売上", size=10)+
+  theme_bw()+
+  theme(axis.text = element_text(size=20),
+        axis.title = element_text(size=20),
+        title = element_text(size=20),
+        legend.title =
+          element_text(size=20),legend.text =
+          element_text(size=20))
+
+ggsave("最終報告/fig/all_predict.png",
+       width=16, height=9)  
+```
+
+
+```{r all_predict}
+forecast_all %>% 
+  filter(test == "test") %>% 
+  ggplot(aes(ds, colour = test))+
+  geom_line(aes(y = exp(yhat)), colour="skyblue", size=0.9)+
+  geom_point(aes(y = exp(y)), size=2)+
+  scale_colour_manual(values = c(test = "red", train="gray25"),
+                      name = "")+
+  labs(title="テスト期間", x = "", y = "売上", size=10)+
+  theme_bw()+
+  theme(axis.text.x =
+          element_text(size=20),axis.text.y =
+          element_text(size=20),
+        axis.title = element_text(size=20),
+        title = element_text(size=20),
+        legend.title =
+          element_text(size=20),legend.text =
+          element_text(size=20))
+
+ggsave("最終報告/fig/all_test.png",
+       width=16, height=9)  
+```
+
+```{r y_yhat_all}
+forecast_all %>% 
+  ggplot(aes(exp(y),exp(yhat),colour=test))+
+  geom_abline(colour="red", size=2)+
+  geom_point(size=3)+
+  scale_colour_manual(values = c(test = "blue", train="gray50"),
+                      name = "")+
+  labs(title="予測値と実測値", x="フィッティング（予測値）", y="売上")+
+  theme_bw()+
+  theme(axis.text.x =
+          element_text(size=20),axis.text.y =
+          element_text(size=20),
+        axis.title = element_text(size=20),
+        title = element_text(size=20),
+        legend.title =
+          element_text(size=20),legend.text =
+          element_text(size=20))
+ggsave("最終報告/fig/y_yhat_all.png",
+       width=16, height=9)  
+
+forecast_all %>% 
+  filter(test=="train") %>% 
+  select(y, yhat) %>% 
+  mutate_all(funs(exp)) %>% 
+  cor()
+
+0.9610244^2 %>% round(3)
+
+forecast_all %>% 
+  mutate(y = exp(y),
+         yhat = exp(yhat),
+         resid = y - yhat) %>% 
+  filter(test == "test") %>% 
+  transmute(resid = resid^2) %>% 
+  .$resid %>% 
+  mean() %>% 
+  sqrt()
+```
+
+```{r component}
+comp_all <- prophet_plot_components(m_all, forecast_all)
+
+comp_all[[1]] <- comp_all[[1]]+
+  geom_line(size=1, colour="skyblue")+
+  theme_bw()+
+  labs(x = "", y="トレンド")+
+  theme(text = element_text(size=30))
+
+
+comp_all[[2]] <- comp_all[[2]]+
+  geom_line(size=1, colour="skyblue")+
+  theme_bw()+
+  labs(x="", y = "祝日効果")+
+  theme(text = element_text(size=30))
+
+comp_all[[3]] <- comp_all[[3]]+
+  geom_line(size=1, colour="skyblue")+
+  theme_bw()+
+  labs(x="", y="週周期")+
+  theme(text = element_text(size=30))
+
+comp_all[[4]] <- comp_all[[4]]+
+  geom_line( size=1, colour="skyblue")+
+  labs(x="", y="年周期")+
+  theme_bw()+
+  theme(text = element_text(size=30))
+
+comp_all[[5]] <- comp_all[[5]]+
+  geom_line(size=1, colour="skyblue")+
+  theme_bw()+
+  labs(x = "", y = "降水による影響")+
+  theme(text = element_text(size=30))
+
+png("最終報告/fig/comp_all.png",
+       width=2000, height=900)  
+multiplot(plotlist = comp_all, cols=1)
+dev.off()
+```
+
+## all_resid
+
+```{r resid_all}
+forecast_all %>% 
+  transmute(ds,
+            y = exp(y),
+            yhat = exp(yhat),
+            resid = y - yhat) %>% 
+  ggplot(aes(resid))+
+  geom_density()
+```
+
+
+## storely
+
+```{r}
+fit.prophet
+```
+
