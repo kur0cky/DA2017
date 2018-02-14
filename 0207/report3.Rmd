@@ -31,7 +31,7 @@ weather <- read_csv("data/weather.csv") %>%
 date <- read_csv("data/date.csv")
 ```
 
-```{r holiday data, include=FALSE, eval=FALSE}
+```{ holiday data, include=FALSE, eval=FALSE}
 date <- read_csv("E:/Git/RC/data/date_info.csv")
 dt <- tibble(dt = seq(as_date("2015-07-01"), as_date("2017-06-30"), by = "d")) %>% 
   full_join(date %>% select(dt=calendar_date, holiday=holiday_flg), by = "dt")
@@ -208,6 +208,17 @@ fit.prophet <- df_store %>%
 ```
 
 
+```{r}
+result <- fit.prophet %>% 
+  select(store_id, forecast) %>% 
+  unnest() %>% 
+  mutate(ds = as_date(ds)) %>% 
+  right_join(data_store %>% select(-rain) ,
+             by = c("store_id", "ds")) %>% 
+  mutate(test = if_else(ds >= as_date("2017-06-01"), "test", "train")) %>% 
+  left_join(store %>% select(store_id, store_name),
+            by = "store_id")
+```
 
 
 
@@ -290,7 +301,7 @@ ggsave("最終報告/fig/all_predict.png",
 ```
 
 
-```{r all_predict}
+```{r all_test}
 forecast_all %>% 
   filter(test == "test") %>% 
   ggplot(aes(ds, colour = test))+
@@ -407,7 +418,68 @@ forecast_all %>%
 
 ## storely
 
-```{r}
-fit.prophet
+```{r storely_predict}
+result %>% 
+  ggplot(aes(ds, colour = test))+
+  geom_line(aes(y = exp(yhat)), colour="skyblue", size=0.6)+
+  geom_point(aes(y = exp(y)), size=2)+
+  scale_colour_manual(values = c(test = "red", train="gray25"),
+                      name = "")+
+  labs(title = "店舗ごとの売上とフィッティング",x = "", y = "売上", size=10)+
+  theme_bw()+
+  facet_wrap(~store_name, scale="free")+
+  theme(text = element_text(size=15))
+
+ggsave("最終報告/fig/predict_store.png",
+       width=16, height=9)  
+```
+
+```{r test_store}
+result %>% 
+  filter(test == "test") %>% 
+  ggplot(aes(ds, colour = test))+
+  geom_line(aes(y = exp(yhat)), colour="skyblue", size=0.9)+
+  geom_point(aes(y = exp(y)), size=2)+
+  scale_colour_manual(values = c(test = "red", train="gray25"),
+                      name = "")+
+  facet_wrap(~store_name, scale="free")+
+  labs(title="店舗ごとテスト期間", x = "", y = "売上", size=10)+
+  theme_bw()+
+  theme(text = element_text(size=15))
+
+ggsave("最終報告/fig/test_store.png",
+       width=16, height=9)  
+```
+
+```{r y_yhat_store}
+result %>% 
+  ggplot(aes(exp(y),exp(yhat),colour=test))+
+  geom_abline(colour="red", size=1)+
+  geom_point(size=3)+
+  scale_colour_manual(values = c(test = "blue", train="gray50"),
+                      name = "")+
+  facet_wrap(~store_name, scale = "free")+
+  labs(title="予測値と実測値", x="フィッティング（予測値）", y="売上")+
+  theme_bw()+
+  theme(text = element_text(size=15))
+ggsave("最終報告/fig/y_yhat_store.png",
+       width=16, height=9)  
+
+result %>% 
+  filter(test=="train") %>% 
+  group_by(store_name) %>% 
+  mutate(y = exp(y),
+         yhat = exp(yhat)) %>% 
+  select(store_id, y, yhat) %>% 
+  summarise(Rsq = cor(y,yhat)^2)
+
+
+result %>% 
+  filter(test == "test") %>% 
+  group_by(store_name) %>% 
+  mutate(y = exp(y),
+         yhat = exp(yhat),
+         resid = (y - yhat)^2) %>% 
+  summarise(RMSE=sqrt(mean(resid))) 
 ```
 
