@@ -1,5 +1,5 @@
 ---
-title: "report3"
+title: "report4"
 author: "Yutaka Kuroki"
 date: "2018年2月12日"
 output: html_document
@@ -23,7 +23,10 @@ library(knitr)
 ```{r data import, include=FALSE}
 setwd("E:/Git/DataAnalysis2017")
 receipt <- read_csv("data/receipt_henpin_syori_fin.csv")
-store <- read_csv("data/store_1.csv")
+store <- read_csv("data/store_1.csv") %>% 
+  mutate(store_name = if_else(store_name == "メン中野店", "中野店", store_name),
+         store_name = if_else(store_name == "青山店", "表参道店", store_name),
+         store_name = if_else(store_name == "新宿サウス店", "新宿店", store_name))
 weather <- read_csv("data/weather.csv") %>% 
   mutate(dt = as_date(Date),
          rain = log1p(rain)) %>% 
@@ -79,21 +82,34 @@ write_csv(tmp2, "data/date.csv")
 
 まずはベースのデータ。明らかにおかしい外れ値除去
 
-```{r all_sales}
-all.tmp <- receipt %>% 
-  group_by(dt) %>% 
-  summarise(sales = sum(in_tax))
+```{r all_customer}
+all <- receipt %>% 
+  group_by(dt, customer_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  summarise(sales = sum(sales),
+            n_customer = n()) %>% 
+  filter(n_customer > 50)
 
-all.tmp %>% 
-  ggplot(aes(dt,sales))+
-  geom_point()
-
-all <- all.tmp %>% 
-  filter(sales > 500000)
 
 all %>% 
-  ggplot(aes(dt, sales))+
+  ggplot(aes(dt, n_customer))+
   geom_point()
+
+
+receipt %>% 
+  group_by(dt, customer_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  summarise(sales = sum(sales),
+            n_customer = n()) %>% 
+  ggplot(aes(dt, n_customer))+
+  geom_point()+
+  theme_bw()+
+  labs(x = "日付", y = "全体の来店人数")+
+  theme(text = element_text(size=20))
+  
+ggsave("最終報告/fig/n_customer.png",
+       width = 15, height = 9)  
+
 ```
 
 ```{r regressor}
@@ -119,8 +135,8 @@ h <- data_all %>%
 
 ```{r prophet_all, include=FALSE}
 df_all <- data_all %>% 
-  mutate(sales = log(sales)) %>% 
-  select(ds = dt, y = sales, rain) %>% 
+  mutate(n_customer = log(n_customer)) %>% 
+  select(ds = dt, y = n_customer, rain) %>% 
   drop_na() %>% 
   filter(ds < as_date("2017-06-01"))
 m_all <- prophet(yearly.seasonality = TRUE,
@@ -132,12 +148,12 @@ m_all <- prophet(yearly.seasonality = TRUE,
 future_all <- make_future_dataframe(m_all, 30) %>% 
   left_join(weather_all %>% mutate(dt = as_datetime(dt)), by = c("ds" = "dt"))
 
-forecast_all <- predict(m_all, future_all) %>% 
+forecast_all <- predict(m_all, future_all)%>% 
   as_tibble() %>% 
   mutate(ds = as_date(ds)) %>% 
-  left_join(data_all %>% select(dt, sales),
+  left_join(data_all %>% select(dt, n_customer),
             by = c("ds"="dt")) %>% 
-  mutate(y = log(sales)) %>% 
+  mutate(y = log(n_customer)) %>% 
   mutate(resid = y - yhat,
          test = if_else(ds >= as_date("2017-06-01"), "test", "train"))
   
@@ -148,28 +164,30 @@ forecast_all <- predict(m_all, future_all) %>%
 
 
 forecast_all %>% 
+  filter(y >3) %>% 
   select(y, yhat) %>% 
   drop_na() %>% 
   cor()
-0.961^2
+0.963^2
 
 forecast_all %>% 
-  arrange(desc(resid)) %>% 
-  ggplot(aes(yhat, y))+
-  geom_point()
-
+  ggplot(aes(ds, colour=test))+
+  geom_point(aes(y = y))+
+  geom_line(aes(y = yhat),colour="skyblue")+
+  theme_bw()
+  
 data_all %>% 
   transmute(ds = dt,
-            y = log(sales)) %>% 
+            y = log(n_customer)) %>% 
   left_join(forecast_all %>% select(-y), by = "ds") %>%
   filter(ds >= as_date("2017-06-01")) %>% 
   ggplot(aes(ds))+
-  geom_point(aes(y = y))+
-  geom_line(aes(y = yhat), colour="skyblue")
+  geom_point(aes(y = exp(y)))+
+  geom_line(aes(y = exp(yhat)), colour="skyblue")
 
 data_all %>% 
   transmute(ds = dt,
-            y = log(sales)) %>% 
+            y = log(n_customer)) %>% 
   left_join(forecast_all %>% select(-y), by = "ds") %>%
   filter(ds >= as_date("2017-06-01")) %>% 
   transmute(ds, y, yhat,
@@ -183,9 +201,11 @@ data_all %>%
 
 ```{r prophet_store, include=FALSE}
 data_store <- receipt %>% 
-  group_by(store_id, dt) %>% 
-  summarise(sales = log(sum(in_tax))) %>% 
-  rename(ds = dt, y = sales) %>% 
+  group_by(store_id, dt, customer_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  summarise(sales = sum(sales),
+            n_customer = log(n())) %>% 
+  rename(ds = dt, y = n_customer) %>% 
   left_join(weather_all, by = c("ds"="dt")) 
 
 df_store <- data_store %>% 
@@ -220,6 +240,51 @@ result <- fit.prophet %>%
             by = "store_id")
 ```
 
+# ファクター追加
+
+```{r prophet_store, include=FALSE}
+data_store <- receipt %>% 
+  group_by(store_id, dt, customer_id) %>% 
+  summarise(sales = sum(in_tax)) %>% 
+  summarise(sales = sum(sales),
+            n_customer = log(n())) %>% 
+  rename(ds = dt, y = n_customer) %>% 
+  left_join(weather_all, by = c("ds"="dt")) %>% 
+  left_join(tmp %>% drop_na() %>% select(dt, factor), by = c("ds" = "dt"))####一番下のtmp
+
+df_store <- data_store %>% 
+  filter(ds < as_date("2017-06-01")) %>% 
+  group_by(store_id) %>% 
+  nest()
+
+fit.prophet <- df_store %>% 
+  mutate(m = map(data, 
+                 ~ prophet(yearly.seasonality = TRUE,
+                           weekly.seasonality = TRUE,
+                           holidays = h) %>% 
+                   add_regressor("rain", standardize = FALSE) %>% 
+                   add_regressor("factor", standardize = TRUE) %>% 
+                   fit.prophet(.x)),
+         future = map(m, 
+                      ~ make_future_dataframe(.x,30) %>% 
+                        left_join(weather_all %>% mutate(dt = as_datetime(dt)), by = c("ds" = "dt"))),
+         forecast = map2(m, future,
+                         ~ predict(.x,.y)))
+```
+
+
+```{r}
+result <- fit.prophet %>% 
+  select(store_id, forecast) %>% 
+  unnest() %>% 
+  mutate(ds = as_date(ds)) %>% 
+  right_join(data_store %>% select(-rain) ,
+             by = c("store_id", "ds")) %>% 
+  mutate(test = if_else(ds >= as_date("2017-06-01"), "test", "train")) %>% 
+  left_join(store %>% select(store_id, store_name),
+            by = "store_id")
+```
+
 
 
 # figure
@@ -231,17 +296,17 @@ forecast_all %>%
   geom_point(aes(y = exp(y)), size=2)+
   scale_colour_manual(values = c(test = "red", train="gray25"),
                       name = "")+
-  labs(title = "全体の売上とフィッティング",x = "", y = "売上", size=10)+
+  labs(title = "全体の来店人数とフィッティング",x = "日付", y = "来店人数", size=10)+
   theme_bw()+
   theme(axis.text = element_text(size=20),
         axis.title = element_text(size=20),
-        title = element_text(size=20),
+        title = element_text(size=30),
         legend.title =
           element_text(size=20),legend.text =
           element_text(size=20))
 
 ggsave("最終報告/fig/all_predict.png",
-       width=16, height=9)  
+       width=15, height=9)  
 ```
 
 
@@ -253,19 +318,19 @@ forecast_all %>%
   geom_point(aes(y = exp(y)), size=2)+
   scale_colour_manual(values = c(test = "red", train="gray25"),
                       name = "")+
-  labs(title="テスト期間", x = "", y = "売上", size=10)+
+  labs(title="テスト期間の全来店人数", x = "日付", y = "来店人数", size=10)+
   theme_bw()+
   theme(axis.text.x =
           element_text(size=20),axis.text.y =
           element_text(size=20),
         axis.title = element_text(size=20),
-        title = element_text(size=20),
+        title = element_text(size=30),
         legend.title =
           element_text(size=20),legend.text =
           element_text(size=20))
 
 ggsave("最終報告/fig/all_test.png",
-       width=16, height=9)  
+       width=15, height=9)  
 ```
 
 ```{r y_yhat_all}
@@ -275,18 +340,18 @@ forecast_all %>%
   geom_point(size=3)+
   scale_colour_manual(values = c(test = "blue", train="gray50"),
                       name = "")+
-  labs(title="予測値と実測値", x="フィッティング（予測値）", y="売上")+
+  labs(title="全来店人数の予測値と実測値", x="フィッティング（予測値）", y="実測値")+
   theme_bw()+
   theme(axis.text.x =
           element_text(size=20),axis.text.y =
           element_text(size=20),
         axis.title = element_text(size=20),
-        title = element_text(size=20),
+        title = element_text(size=30),
         legend.title =
           element_text(size=20),legend.text =
           element_text(size=20))
 ggsave("最終報告/fig/y_yhat_all.png",
-       width=16, height=9)  
+       width=15, height=9)  
 
 forecast_all %>% 
   filter(test=="train") %>% 
@@ -294,12 +359,12 @@ forecast_all %>%
   mutate_all(funs(exp)) %>% 
   cor()
 
-0.9610244^2 %>% round(3)
+0.962653^2 %>% round(3)
 
 forecast_all %>% 
   mutate(y = exp(y),
          yhat = exp(yhat),
-         resid = y - yhat) %>% 
+         resid = (y - yhat)/y) %>% 
   filter(test == "test") %>% 
   transmute(resid = resid^2) %>% 
   .$resid %>% 
@@ -310,32 +375,39 @@ forecast_all %>%
 ```{r component}
 comp_all <- prophet_plot_components(m_all, forecast_all)
 
-comp_all[[1]] <- comp_all[[1]]+
+comp_all[[1]]<- comp_all[[1]]$data %>% 
+  ggplot(aes(as_date(ds), exp(trend)))+
   geom_line(size=1, colour="skyblue")+
   theme_bw()+
   labs(x = "", y="トレンド")+
+  geom_vline(xintercept = as_date("2016-06-24"))+
   theme(text = element_text(size=30))
 
 
-comp_all[[2]] <- comp_all[[2]]+
+comp_all[[2]] <- comp_all[[2]]$data %>% 
+  ggplot(aes(ds, exp(holidays)))+
   geom_line(size=1, colour="skyblue")+
   theme_bw()+
   labs(x="", y = "祝日効果")+
   theme(text = element_text(size=30))
 
-comp_all[[3]] <- comp_all[[3]]+
-  geom_line(size=1, colour="skyblue")+
+comp_all[[3]] <- comp_all[[3]]$data %>% 
+  ggplot(aes(dow, exp(weekly)))+
+  geom_bar(size=1, colour="skyblue", stat="identity")+
   theme_bw()+
-  labs(x="", y="週周期")+
+  labs(x="", y="週効果")+
   theme(text = element_text(size=30))
 
-comp_all[[4]] <- comp_all[[4]]+
+comp_all[[4]] <- comp_all[[4]]$data %>% 
+  ggplot(aes(as_date(ds), exp(yearly)))+
   geom_line( size=1, colour="skyblue")+
-  labs(x="", y="年周期")+
+  labs(x="", y="年効果")+
   theme_bw()+
-  theme(text = element_text(size=30))
+  theme(text = element_text(size=30))+
+  scale_x_date(date_labels = "%B")
 
-comp_all[[5]] <- comp_all[[5]]+
+comp_all[[5]] <- comp_all[[5]]$data %>% 
+  ggplot(aes(as_date(ds), exp(extra_regressors)))+
   geom_line(size=1, colour="skyblue")+
   theme_bw()+
   labs(x = "", y = "降水による影響")+
@@ -343,7 +415,7 @@ comp_all[[5]] <- comp_all[[5]]+
 
 png("最終報告/fig/comp_all.png",
        width=2000, height=900)  
-multiplot(plotlist = comp_all, cols=1)
+Rmisc::multiplot(plotlist = comp_all, cols=1)
 dev.off()
 ```
 
@@ -369,7 +441,7 @@ result %>%
   geom_point(aes(y = exp(y)), size=2)+
   scale_colour_manual(values = c(test = "red", train="gray25"),
                       name = "")+
-  labs(title = "店舗ごとの売上とフィッティング",x = "", y = "売上", size=10)+
+  labs(title = "店舗ごとの売上とフィッティング",x = "日付", y = "売上", size=10)+
   theme_bw()+
   facet_wrap(~store_name, scale="free")+
   theme(text = element_text(size=15))
@@ -386,13 +458,14 @@ result %>%
   geom_point(aes(y = exp(y)), size=2)+
   scale_colour_manual(values = c(test = "red", train="gray25"),
                       name = "")+
-  facet_wrap(~store_name, scale="free")+
-  labs(title="店舗ごとテスト期間", x = "", y = "売上", size=10)+
+  facet_wrap(~store_name, scale="free_y")+
+  labs(title="店舗ごとテスト期間", x = "日付", y = "来店人数", size=10)+
   theme_bw()+
-  theme(text = element_text(size=15))
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
 
 ggsave("最終報告/fig/test_store.png",
-       width=16, height=9)  
+       width=15, height=9)  
 ```
 
 ```{r y_yhat_store}
@@ -403,11 +476,12 @@ result %>%
   scale_colour_manual(values = c(test = "blue", train="gray50"),
                       name = "")+
   facet_wrap(~store_name, scale = "free")+
-  labs(title="予測値と実測値", x="フィッティング（予測値）", y="売上")+
+  labs(title="店舗ごと来店人数の予測値と実測値", x="フィッティング（人）", y="実測値（人）")+
   theme_bw()+
-  theme(text = element_text(size=15))
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
 ggsave("最終報告/fig/y_yhat_store.png",
-       width=16, height=9)  
+       width=15, height=9)  
 
 result %>% 
   filter(test=="train") %>% 
@@ -423,8 +497,8 @@ result %>%
   group_by(store_name) %>% 
   mutate(y = exp(y),
          yhat = exp(yhat),
-         resid = (y - yhat)^2) %>% 
-  summarise(RMSE=sqrt(mean(resid))) 
+         resid = ((y - yhat)/y)^2) %>% 
+  summarise(RMSPE=sqrt(mean(resid))) 
 ```
 
 ```{r trend_store}
@@ -442,10 +516,22 @@ for(i in 1:12){
 
 trend <- tmp %>% 
   do.call("rbind",.) %>% 
-  left_join(store, by = "store_id")
+  left_join(store, by = "store_id") %>% 
+  mutate(ds = as_date(ds)) %>% 
+  left_join(data_store, by = c("ds", "store_id"))
 trend %>% 
-  ggplot(aes(ds, exp(trend), colour=store_name, group=store_name))+
-  geom_line()
+  ggplot(aes(x = ds))+
+  geom_point(aes(y = exp(y)), colour = "gray50", alpha=0.5)+
+  geom_line(aes(y = exp(trend)), colour = "orange", size=2)+
+  facet_wrap(~store_name, scale = "free_y")+
+  labs(x = "日付",
+       y = "トレンド（人）",
+       title = str_c("各店舗のトレンド", expression(exp(g(t)))))+
+  theme_bw()+
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
+ggsave("最終報告/fig/trend_store.png",
+       width = 15, height = 9)
 
 ```
 
@@ -469,12 +555,13 @@ weekly %>%
   ggplot(aes(dow, exp(weekly)))+
   geom_bar(stat="identity")+
   facet_wrap(~store_name)+
-  labs(title="週周期", y="倍率", x="")+
+  labs(title=str_c("週周期"), y="倍率", x="")+
   theme_bw()+
-  theme(text = element_text(size=15))
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
 
 ggsave("最終報告/fig/weekly_store.png",
-       width=16, height=9)  
+       width=15, height=9)  
 ```
 
 ```{r yearly_store}
@@ -490,16 +577,21 @@ yearly <- tmp %>%
   left_join(store, by = "store_id")
 yearly %>% 
   mutate(ds = as_date(ds)) %>% 
-  ggplot(aes(ds, exp(yearly), colour=store_name, group=store_name))+
-  geom_line()+
+  ggplot(aes(ds))+
+  geom_line(aes(y = exp(yearly), colour=store_name, group=store_name))+
   theme_bw()+
-  labs(title="年周期", x="", y="倍率")+
+  labs(title="年周期", x="月日", y="倍率")+
   scale_x_date(date_labels = "%B")+
-  theme(text = element_text(size=15))
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
 
 ggsave("最終報告/fig/yearly_store.png",
-       width=16, height=9)  
+       width=15, height=9)  
 ```
+
+
+
+
 
 ```{r holiday}
 for(i in 1:12){
@@ -519,11 +611,12 @@ holiday <- tmp %>%
   summarise(value = mean(value))
 holiday %>% 
   ggplot(aes(holiday, exp(value)))+
-  geom_bar(stat="identity")+
-  labs(title="祝日効果", y="倍率", x = "祝日の種類")+
+  geom_bar(stat="identity", width=0.6, colour="black", fill = "steelblue")+
+  labs(title="祝日効果 exp(h(t))", y="倍率", x = "祝日の種類")+
   theme_bw()+
   facet_wrap(~store_name)+
-  theme(text = element_text(size=15))
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
 
 ggsave("最終報告/fig/holiday_store.png",
        width=16, height=9)  
@@ -541,10 +634,15 @@ holiday %>%
   spread(dow, weekly) %>% 
   ggplot(aes(exp(日曜日), exp(D1)))+
   geom_abline(size=1, colour="orange")+
-  geom_text(aes(label = store_name), size=2)+
+  geom_text(aes(label = store_name), size=10)+
   theme_bw()+
-  scale_x_continuous(limits=c(0,2))+
-  scale_y_continuous(limits = c(0,2))
+  labs(x="日曜日効果", y="祝日効果", title ="祝日効果と日曜日効果")+
+  scale_x_continuous(limits=c(1.2,2))+
+  scale_y_continuous(limits = c(1.2,2))+
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
+ggsave("最終報告/fig/D1_sun.png",
+       height = 9, width=15)
 
 holiday %>% 
   select(store_name, dow = holiday, weekly = value) %>% 
@@ -556,10 +654,15 @@ holiday %>%
   spread(dow, weekly) %>% 
   ggplot(aes(exp(金曜日), exp(D2)))+
   geom_abline(size=1, colour="orange")+
-  geom_text(aes(label = store_name), size=2)+
+  geom_text(aes(label = store_name), size=10)+
   theme_bw()+
-  scale_x_continuous(limits=c(0,1.5))+
-  scale_y_continuous(limits = c(0,1.5))
+  labs(x="金曜日効果", y="祝前日効果", title ="祝前日効果と金曜日効果")+
+  scale_x_continuous(limits=c(0.7,1.4))+
+  scale_y_continuous(limits = c(0.7,1.4))+
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
+ggsave("最終報告/fig/D2_fri.png",
+       height = 9, width=15)
 ```
 
 
@@ -579,9 +682,10 @@ rain %>%
   ggplot(aes(ds, exp(rain), group=store_name))+
   geom_line()+
   theme_bw()+
-  labs(title= "降水量による影響", y = "倍率", x = "")+
+  labs(title= str_c("降水量による影響 "), y = "倍率", x = "日付")+
   facet_wrap(~store_name)+
-  theme(text = element_text(size=15))
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
 
 ggsave("最終報告/fig/rain_store.png",
        width=16, height=9)  
@@ -594,7 +698,28 @@ result %>%
   filter(test == "train") %>% 
   ggplot(aes(ds, resid))+
   geom_line()+
-  facet_wrap(~store_id, scale="free")
+  facet_wrap(~store_id, scale="free_y")
+
+result %>% 
+  mutate(resid = exp(y) - exp(yhat)) %>% 
+  filter(test == "train") %>% 
+  ggplot(aes(resid))+
+  geom_histogram(bins=20)+
+  facet_wrap(~store_name, scale="free_x")
+
+resid %>% 
+  select(store_name, ds, resid) %>% 
+  ggplot(aes(ds, resid))+
+  geom_line()+
+  facet_wrap(~store_name, scale="free_y")+
+  labs(x = "日付", y = "残差（人）",
+       title = "店舗ごとモデルの残差")+
+  theme_bw()+
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
+
+ggsave("最終報告/fig/resid_line.png",
+       height = 9, width=15)
 ```
 
 ```{r acf}
@@ -617,10 +742,111 @@ result %>%
   ggplot(aes(index, acf))+
   geom_bar(stat="identity", width=0.7)+
   geom_line(aes(y = pacf), colour="blue")+
+  labs(x="ラグ", y = "相関", title = "店舗ごと残差の自己相関と偏自己相関")+
   theme_bw()+
-  facet_wrap(~store_name)
+  geom_hline(yintercept = c(0.1,-0.1), colour="red", linetype=2)+
+  facet_wrap(~store_name)+
+  theme(text = element_text(size=15),
+        title = element_text(size=25))
+
+ggsave("最終報告/fig/acf_store.png",
+       width = 15, height = 9)
 ```
 
 
+```{r}
+resid <- result %>% 
+  mutate(resid = exp(y) - exp(yhat)) %>% 
+  filter(test == "train")
+  
 
+
+receipt %>% 
+  filter(store_id != 9) %>% 
+  mutate(urban = if_else(store_id %in% c(1,2,3,4,11), "city", "bed")) %>% 
+  group_by(urban, dt, customer_id) %>% 
+  summarise() %>% 
+  ungroup() %>% 
+  group_by(urban, dt) %>% 
+  summarise(n = n()) %>% 
+  mutate(n = scale(n)) %>% 
+  spread(urban, n) %>% 
+  mutate(factor = city-bed) ->tmp
+tmp %>% 
+  right_join(resid, by = c("dt"="ds")) %>% 
+  select(store_id, dt, factor, resid) %>% 
+  group_by(store_id) %>% 
+  select(-dt) %>% 
+  nest() %>% 
+  mutate(test = map(data,
+                    ~ cor.test(.x$factor, .x$resid))) ->tmp2
+  
+tmp2 %>% 
+  left_join(store, by = "store_id") -> tmp3
+%>% 
+  mutate(pvalue = map_dbl(test, ~.x$test$p.value %>% unlist()),
+         cor = map_dbl(test, ~.x$test$estimate %>% unlist()))
+tmp %>% 
+  right_join(resid, by = c("dt"="ds")) %>% 
+  ggplot(aes(factor, resid)) +
+  geom_point(alpha=0.2)+
+  theme_bw()+
+  facet_wrap(~store_name, scale = "free_y")+
+  labs(title="各店舗の残差と都市ファクターの散布図",
+       x = "都市ファクター", 
+       y = "店舗ごとモデルによる残差")+
+  theme(text = element_text(size=15),
+        title=element_text(size=25))
+
+ggsave("最終報告/fig/factor_resid.png",
+       height = 9, width=15)
+  
+```
+
+```{r}
+factor <- list()
+tmp %>%
+  gather(key, value, -dt) %>% 
+  filter(key != "factor") %>% 
+  ggplot(aes(dt, group=key,colour=key))+
+  geom_point(aes(y=value))+
+  theme_bw()+
+  labs(x = "日付", title="都市型と住宅型の来店人数（標準化）")+
+  theme(text = element_text(size=15),
+        title = element_text(size=25)) -> factor[[1]]
+
+tmp %>% 
+  ggplot(aes(dt, factor))+
+  geom_line()+
+  theme_bw()+
+  labs(x="日付", title="都市ファクター（都市型 - 住宅型）", "value")+
+  theme(text = element_text(size=15),
+        title = element_text(size=25))-> factor[[2]]
+  
+Rmisc::multiplot(plotlist = factor, cols=1)
+```
+
+```{r}
+resid_tmp <- resid %>% 
+  select(store_name, ds, resid) %>% 
+  spread(store_name, resid) %>% 
+  select(-ds)
+
+pm <- ggpairs(
+    resid_tmp,
+    upper = list(continuous = wrap("cor", colour="black", size = 5),
+                 combo = "box_no_facet", discrete = "facetbar", na = "na"),
+    diag = list(continuous = wrap("barDiag", fill="skyblue", colour="blue", size=0.3), discrete = "barDiag", na = "naDiag"),
+    lower = list(continuous = wrap("points",size=0.1), combo = "dot_no_facet")
+)
+pm <- pm +
+  theme_bw()+
+  theme(strip.background = element_rect(fill="aquamarine"),
+        strip.text = element_text(face = "bold", size=rel(1)))
+
+pm
+
+ggsave("最終報告/fig/ggpairs.png",
+       height=9, width=15)
+```
 
